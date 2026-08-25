@@ -35,6 +35,14 @@
     "budget_at_25pct_hours": 7.6
   },
   "_total_hours": 31.255,
+  "universe": {
+    "definition": "trainval utts with n_tokens >= 50",
+    "utterances": 31071,
+    "hours": 30.176,
+    "budget_utts": 7768,
+    "budget_rule": "round(budget_fraction * |universe|), BY UTTERANCE COUNT",
+    "excluded_short": 911
+  },
   "anomalies": {
     "counts": {
       "trainval_too_short_for_crops": 911,

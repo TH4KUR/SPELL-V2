@@ -24,13 +24,25 @@ def _fake_index(n_videos=10, utts_per_video=3):
                 "stem": str(50001 + u), "tokens_path": f"x/{vid}/{u}.pt",
                 "audio_path": f"x/{vid}/{u}.mp4", "audio_kind": "mp4",
                 "txt_path": f"x/{vid}/{u}.txt", "n_tokens": 100, "duration_s": 2.0,
+                "selectable": True,
                 "conf": 4, "text_raw": "HELLO", "text_norm": "hello", "n_chars_norm": 5,
             })
+    # two short (non-selectable) trainval utts that must NEVER reach any list
+    for j, vid in enumerate(("video00", "video05")):
+        rows.append({
+            "utterance_id": f"{vid}/60001", "split": "trainval", "video_id": vid,
+            "stem": "60001", "tokens_path": f"x/{vid}/short.pt",
+            "audio_path": f"x/{vid}/short.mp4", "audio_kind": "mp4",
+            "txt_path": f"x/{vid}/short.txt", "n_tokens": 30, "duration_s": 0.6,
+            "selectable": False,
+            "conf": 4, "text_raw": "SHORT", "text_norm": "short", "n_chars_norm": 5,
+        })
     for i in range(4):
         rows.append({
             "utterance_id": str(i), "split": "test", "video_id": "", "stem": str(i),
             "tokens_path": f"t/{i}.tokens.pt", "audio_path": f"t/{i}.wav",
             "audio_kind": "wav", "txt_path": None, "n_tokens": 60, "duration_s": 1.2,
+            "selectable": False,
             "conf": None, "text_raw": "", "text_norm": "", "n_chars_norm": 0,
         })
     return pd.DataFrame(rows)
@@ -42,7 +54,22 @@ def test_video_disjoint_and_size_reached():
     assert set(train_df["video_id"]).isdisjoint(set(val_df["video_id"]))
     assert len(val_df) >= 6                      # whole videos only -> >= target
     assert len(val_df) % 3 == 0                  # videos are atomic units of 3 utts
-    assert len(train_df) + len(val_df) == len(df[df["split"] == "trainval"])
+    # universe partition: selectable trainval rows only, exactly once
+    universe = df[(df["split"] == "trainval") & (df["selectable"] == True)]  # noqa: E712
+    assert len(train_df) + len(val_df) == len(universe)
+    seen = set(train_df["utterance_id"]) | set(val_df["utterance_id"])
+    assert seen == set(universe["utterance_id"])
+
+
+def test_short_utterances_never_reach_lists():
+    df = _fake_index()
+    train_df, val_df = build_split_frames(df, seed=7, val_size_utts=6)
+    for g in (train_df, val_df):
+        assert (g["n_tokens"] < 50).sum() == 0
+        assert bool(g["selectable"].all())
+    short_ids = {"video00/60001", "video05/60001"}
+    all_ids = set(train_df["utterance_id"]) | set(val_df["utterance_id"])
+    assert short_ids & all_ids == set()
 
 
 def test_determinism_same_seed():
@@ -70,7 +97,7 @@ def test_written_files_are_byte_identical_on_rerun(tmp_path):
         assert (tmp_path / "a" / name).read_bytes() == (tmp_path / "b" / name).read_bytes()
 
 
-def test_freeze_manifest_records_hashes(tmp_path):
+def test_freeze_manifest_records_hashes_and_universe(tmp_path):
     df = _fake_index()
     proto = _proto()
     train_df, val_df = build_split_frames(df, proto.split_seed, proto.val_size_utts)
@@ -81,3 +108,9 @@ def test_freeze_manifest_records_hashes(tmp_path):
     for fname, rec in manifest["files"].items():
         h = hashlib.sha256((tmp_path / fname).read_bytes()).hexdigest()
         assert h == rec["sha256"]
+    # universe-v2 bookkeeping
+    from config import universe_budget
+    n_uni = len(train_df) + len(val_df)
+    assert manifest["revision"] == "universe-v2"
+    assert manifest["universe"]["utterances"] == n_uni
+    assert manifest["universe"]["budget_utts"] == universe_budget(n_uni, proto.budget_fraction)

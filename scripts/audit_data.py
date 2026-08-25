@@ -34,7 +34,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import text_norm  # noqa: E402
-from config import ProtocolConfig, load_protocol  # noqa: E402
+from config import ProtocolConfig, load_protocol, universe_budget  # noqa: E402
 
 MAX_EXAMPLES_KEPT = 50  # anomaly lists are truncated in the JSON report
 
@@ -155,8 +155,9 @@ def _token_row(uid, *, split, video_id, stem, tokens_path, audio_path, audio_kin
         return {
             "utterance_id": uid, "split": split, "video_id": video_id, "stem": stem,
             "tokens_path": tokens_path, "audio_path": audio_path, "audio_kind": audio_kind,
-            "txt_path": txt_path, "n_tokens": 0, "duration_s": 0.0, "conf": conf,
-            "text_raw": text_raw, "text_norm": "", "n_chars_norm": 0,
+            "txt_path": txt_path, "n_tokens": 0, "duration_s": 0.0,
+            "selectable": False,  # unreadable tokens can never be selected
+            "conf": conf, "text_raw": text_raw, "text_norm": "", "n_chars_norm": 0,
         }
 
     shape_ok = (
@@ -176,12 +177,17 @@ def _token_row(uid, *, split, video_id, stem, tokens_path, audio_path, audio_kin
     if 0 < n_tokens < proto.min_crop_frames:
         anomalies.add(f"{split}_too_short_for_crops", f"{uid}: T={n_tokens}")
 
+    # Selectable universe (locked rule): trainval utts with >= min_crop_frames.
+    # Everything outside it is invisible to manifests, selections, and budgets.
+    selectable = split == "trainval" and n_tokens >= proto.min_crop_frames
+
     norm = text_norm.normalize_text(text_raw) if text_raw else ""
     return {
         "utterance_id": uid, "split": split, "video_id": video_id, "stem": stem,
         "tokens_path": tokens_path, "audio_path": audio_path, "audio_kind": audio_kind,
         "txt_path": txt_path, "n_tokens": n_tokens,
         "duration_s": round(n_tokens / proto.token_hz, 4),
+        "selectable": selectable,
         "conf": conf, "text_raw": text_raw, "text_norm": norm,
         "n_chars_norm": len(norm),
     }
@@ -207,6 +213,17 @@ def summarize(rows: list[dict], proto: ProtocolConfig) -> dict:
             "budget_at_25pct_hours": round(float(g["duration_s"].sum()) * proto.budget_fraction / 3600.0, 3),
         }
     report["_total_hours"] = round(float(df["duration_s"].sum()) / 3600.0, 3)
+
+    # The selectable universe: the ONLY pool manifests/selections/budgets may draw from.
+    uni = df[df["selectable"] == True]  # noqa: E712 - pandas boolean mask
+    report["universe"] = {
+        "definition": f"trainval utts with n_tokens >= {proto.min_crop_frames}",
+        "utterances": int(len(uni)),
+        "hours": round(float(uni["duration_s"].sum()) / 3600.0, 3),
+        "budget_utts": universe_budget(int(len(uni)), proto.budget_fraction),
+        "budget_rule": "round(budget_fraction * |universe|), BY UTTERANCE COUNT",
+        "excluded_short": int(((df["split"] == "trainval") & (df["selectable"] == False)).sum()),  # noqa: E712
+    }
     return report
 
 
@@ -248,6 +265,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"        mean={r['duration_s_mean']}s  p95={r['duration_s_p95']}s  "
                   f"conf_hist={r['conf_histogram']}")
     print(f"TOTAL hours: {report['_total_hours']}")
+    u = report["universe"]
+    print(f"UNIVERSE: {u['utterances']} utts ({u['hours']}h) [{u['definition']}]  "
+          f"budget@{round(proto.budget_fraction * 100)}%={u['budget_utts']}utts  "
+          f"excluded_short={u['excluded_short']}")
     print(f"Anomaly counts: {dict(anomalies.counters) or 'NONE'}")
     print(f"Wrote {index_path} ({len(df)} rows) and {report_path}")
     return 0

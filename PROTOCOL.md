@@ -14,7 +14,9 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
   → No re-extraction was needed; the corrected crop sampler is the alignment path.
 - Official `test/` is flat `.wav` + `.tokens.pt` pairs (1321 clips), transcripts
   recovered separately by `scripts/recover_test_transcripts.py`.
-- Corpus ≈ 30 h → the 25 % budget ≈ 7.6 h.
+- **Selectable universe** (locked): trainval utterances with `n_tokens >= 50`
+  = **31,071 utts (30.18 h)**. The 911 shorter trainval utterances are excluded from
+  ALL manifests, selections, and budget computations.
 
 ## 2. Frozen conventions (never change after Phase 0)
 
@@ -26,8 +28,15 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
    indices 1–7 = acoustics. Track B reads index 0 only; Track A reads all 8.
 4. **Padding sentinel**: token padding uses `-1` (real codes span `[0, 1023)`).
    Every consumer must mask with returned lengths/masks; CTC never sees pad as a class.
-5. **Utterances shorter than `min_crop_frames`** (50 frames = 1 s) are excluded from
-   crop-based sampling but remain valid full-utterance examples for Track B.
+5. **Universe & budget basis**: subset manifests may draw ONLY from the selectable
+   universe (`selectable == True` in `data_index.parquet`). Budget percentages are
+   defined BY UTTERANCE COUNT over this universe — 25 % ⇒
+   `universe_budget(31071, 0.25) = 7768 utts` (round-half-up, see `config.universe_budget`);
+   realized HOURS are reported per subset afterwards.
+6. **Embedding safety**: the pad sentinel must NEVER reach an embedding lookup —
+   PyTorch wraps negative indices to the LAST vocabulary row, silently corrupting
+   batches. Consumers mask/slice before `nn.Embedding`. Phase 1 MUST ship a unit
+   test proving pad positions never reach the lookup.
 
 ## 3. Training protocol (locked before any subset run)
 
@@ -55,19 +64,30 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
 - Transcript confidence (`Conf: 1–6`) is stored in `data_index.parquet` as metadata;
   it is not used by any Phase-0 decision.
 
-## 5. Run manifest contract
+## 5. Storage policy
+
+- Trajectory checkpoints **stream to the NAS on write** (`nas_root`, default
+  `/share1/NAS/spell-rq2`, override with `SPELL_NAS_ROOT`); local run directories keep
+  ONLY `last.ckpt`.
+- **df gate before every array launch**: `scripts/check_storage.py --strict` runs at job
+  start in `slurm/template.sbatch`; any failure aborts the task before training.
+  Locally the gate runs soft via `scripts/debug.sh` (dev boxes have no `/share1`).
+- Only **LESS-designated runs** (`keep_local_traj=1` column in the run plan TSV) retain
+  full trajectories locally.
+
+## 6. Run manifest contract
 
 Every training run writes `run_manifest.json` next to its checkpoints:
 subset manifest path, seed, config hash (`config.config_hash`, sha256 over canonicalized
 YAML), git SHA, protocol version (= this file's revision), start/end timestamps.
 
-## 6. Deferred-but-revivable research questions
+## 7. Deferred-but-revivable research questions
 
 RQ1 (layer-view ablation) and RQ3 (transfer matrix) stay out of scope; cheap insurance:
 tokens are already organized per-layer-view, per-sample losses + 5-epoch checkpoints are
 kept for every grid run, and every subset carries characterization stats.
 
-## 7. How to run things
+## 8. How to run things
 
 All commands run from the project root inside the pymax venv
 (`source ~/bin/pymax/bin/activate`) so flat root modules import cleanly:
@@ -75,6 +95,11 @@ All commands run from the project root inside the pymax venv
 ```bash
 python scripts/audit_data.py                 # rebuild data_index.parquet + audit report
 python scripts/build_splits.py               # rebuild frozen split files (byte-stable)
+python scripts/check_storage.py              # storage gate (--strict for launches)
+python scripts/spot_check.py                 # decode 10 utts -> outputs/spotcheck/ (ear check)
 pytest -q                                    # unit tests incl. crop alignment proof
 bash scripts/debug.sh                        # single-GPU debug launcher (tests + smoke)
 ```
+
+Revision history: `universe-v2` (post-audit amendment) re-froze the internal split over
+the selectable universe; the original Phase-0 lists remain in git history.

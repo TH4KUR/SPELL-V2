@@ -31,7 +31,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import ProtocolConfig, load_protocol  # noqa: E402
+from config import ProtocolConfig, load_protocol, universe_budget  # noqa: E402
 
 
 def sha256_of(path: Path) -> str:
@@ -39,14 +39,16 @@ def sha256_of(path: Path) -> str:
 
 
 def build_split_frames(df: pd.DataFrame, seed: int, val_size_utts: int):
-    """Split trainval rows into (train_df, val_df) at VIDEO granularity.
+    """Split the SELECTABLE universe into (train_df, val_df) at VIDEO granularity.
 
+    Only rows with ``selectable == True`` (trainval, >= min_crop_frames) take
+    part — the 911 short utterances are invisible to all manifests (locked rule).
     Deterministic: same df/seed -> same split. Videos are shuffled with a local
     PRNG seeded by ``seed``; whole videos are taken until the val holdout holds
     >= val_size_utts utterances.
     """
-    trainval = df[df["split"] == "trainval"]
-    by_video = {vid: g for vid, g in trainval.groupby("video_id", sort=True)}
+    universe = df[(df["split"] == "trainval") & (df["selectable"] == True)]  # noqa: E712
+    by_video = {vid: g for vid, g in universe.groupby("video_id", sort=True)}
     videos = sorted(by_video)          # canonical order BEFORE shuffling
     rng = random.Random(seed)
     rng.shuffle(videos)
@@ -60,8 +62,8 @@ def build_split_frames(df: pd.DataFrame, seed: int, val_size_utts: int):
         n_val += len(by_video[vid])
 
     val_ids = set(val_videos)
-    mask = trainval["video_id"].isin(val_ids)
-    return trainval[~mask], trainval[mask]
+    mask = universe["video_id"].isin(val_ids)
+    return universe[~mask], universe[mask]
 
 
 def write_split_files(train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.DataFrame,
@@ -93,9 +95,17 @@ def write_split_files(train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.
         return round(float(g["duration_s"].sum()) / 3600.0, 3)
 
     manifest = {
+        "revision": "universe-v2",  # selectable universe = trainval utts >= min_crop_frames
         "seed": proto.split_seed,
         "val_size_target_utts": proto.val_size_utts,
         "video_disjoint": True,
+        "universe": {
+            "definition": f"trainval utts with n_tokens >= {proto.min_crop_frames}",
+            "utterances": int(len(train_df) + len(val_df)),
+            "budget_utts": universe_budget(int(len(train_df) + len(val_df)),
+                                           proto.budget_fraction),
+            "budget_rule": "round(budget_fraction * |universe|), BY UTTERANCE COUNT",
+        },
         "counts": {
             "train": int(len(train_df)), "val": int(len(val_df)), "test": int(len(test_df)),
         },
@@ -129,8 +139,21 @@ def main(argv: list[str] | None = None) -> int:
     assert len(val_df) >= proto.val_size_utts, (
         f"val holdout {len(val_df)} < target {proto.val_size_utts}"
     )
+    # Universe integrity: nothing below the frame floor may reach the lists,
+    # and every selectable trainval utterance must land in exactly one list.
+    min_frames = proto.min_crop_frames
+    for name, g in (("train", train_df), ("val", val_df)):
+        short = (g["n_tokens"] < min_frames).sum()
+        assert short == 0, f"{name} list contains {short} utterances < {min_frames} frames"
+        assert bool(g["selectable"].all()), f"{name} list contains non-selectable rows"
+    n_trainval_selectable = int(((df["split"] == "trainval") & (df["selectable"] == True)).sum())  # noqa: E712
+    assert len(train_df) + len(val_df) == n_trainval_selectable, (
+        f"universe partition mismatch: {len(train_df)}+{len(val_df)} != {n_trainval_selectable}"
+    )
 
     manifest = write_split_files(train_df, val_df, test_df, args.splits_dir, proto)
+    u = manifest["universe"]
+    print(f"universe[{u['definition']}]: {u['utterances']} utts -> budget@25%={u['budget_utts']}")
     print(f"train: {manifest['counts']['train']} utts ({manifest['hours']['train']}h)")
     print(f"val:   {manifest['counts']['val']} utts ({manifest['hours']['val']}h) "
           f"across {val_df['video_id'].nunique()} videos [FROZEN]")

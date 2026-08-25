@@ -3,3 +3,10 @@ dataset_root: datasets/LRS3
 subsets_dir: subsets
 index_path: data_index.parquet       # produced by scripts/audit_data.py
 splits_dir: subsets/splits           # frozen internal split lists (committed)
+
+# Storage policy (PROTOCOL.md): trajectory checkpoints stream to the NAS on
+# write; local run dirs keep only last.ckpt. /share1 is cluster-only — override
+# with the SPELL_NAS_ROOT env var for local drills.
+nas_root: /share1/NAS/spell-rq2      # env override: SPELL_NAS_ROOT
+min_free_gb_local: 10                # df gate before any training/array launch
+min_free_gb_nas: 50                  # df gate on the NAS filesystem

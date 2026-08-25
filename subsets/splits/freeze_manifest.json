@@ -1,22 +1,29 @@
 {
+  "revision": "universe-v2",
   "seed": 20260825,
   "val_size_target_utts": 2000,
   "video_disjoint": true,
+  "universe": {
+    "definition": "trainval utts with n_tokens >= 50",
+    "utterances": 31071,
+    "budget_utts": 7768,
+    "budget_rule": "round(budget_fraction * |universe|), BY UTTERANCE COUNT"
+  },
   "counts": {
-    "train": 29981,
-    "val": 2001,
+    "train": 29064,
+    "val": 2007,
     "test": 1321
   },
   "hours": {
-    "train": 28.541,
-    "val": 1.861
+    "train": 28.16,
+    "val": 2.016
   },
   "files": {
     "train_ids.txt": {
-      "sha256": "51ee7cec96c79e3cc8052db28bb79240023cad0943662726c7ff5016ddfcf3cd"
+      "sha256": "d0f6164df3c86aeb132cdc273cd38f689b7640431cc293d59d47f06ccdc293d1"
     },
     "val_ids.txt": {
-      "sha256": "2d9144556f06318a2ecf566305e75ee59e040c1990311b8ccaa50382709987a2"
+      "sha256": "ab13957c07f6af0a10af2aa4789bca9f31f62595e5bc1328bb71919e5909cb31"
     },
     "test_pointers.tsv": {
       "sha256": "22ab6553074318c4a08217db0ee8c2a7c80cf3d7da52ca93bc06e575cd9836c8"

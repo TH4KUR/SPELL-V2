@@ -30,24 +30,33 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class PathsConfig:
-    """Filesystem layout (see configs/paths.yaml)."""
+    """Filesystem layout + storage-policy thresholds (see configs/paths.yaml)."""
 
     dataset_root: Path
     subsets_dir: Path
     index_path: Path
     splits_dir: Path
+    nas_root: Path
+    min_free_gb_local: float
+    min_free_gb_nas: float
 
     @classmethod
     def from_dict(cls, d: dict, base: Path = PROJECT_ROOT) -> "PathsConfig":
+        import os
+
         def _p(v: str) -> Path:
             p = Path(v)
             return p if p.is_absolute() else (base / p).resolve()
 
+        nas = Path(os.environ.get("SPELL_NAS_ROOT", d["nas_root"]))
         return cls(
             dataset_root=_p(d["dataset_root"]),
             subsets_dir=_p(d["subsets_dir"]),
             index_path=_p(d["index_path"]),
             splits_dir=_p(d["splits_dir"]),
+            nas_root=nas,
+            min_free_gb_local=float(d["min_free_gb_local"]),
+            min_free_gb_nas=float(d["min_free_gb_nas"]),
         )
 
 
@@ -97,6 +106,21 @@ def load_protocol(path: str | Path = PROJECT_ROOT / "configs" / "protocol.yaml")
 
 def load_paths(path: str | Path = PROJECT_ROOT / "configs" / "paths.yaml") -> PathsConfig:
     return PathsConfig.from_dict(load_yaml(path))
+
+
+def universe_budget(n_selectable: int, fraction: float) -> int:
+    """Subset budget in UTTERANCES over the selectable universe (locked rule).
+
+    Budget percentages are defined BY UTTERANCE COUNT over the selectable
+    universe (trainval utts with n_tokens >= min_crop_frames), never by hours;
+    realized hours are reported per subset afterwards. Fractional results round
+    HALF UP (not Python's banker's round) so the rule is unambiguous.
+    """
+    if not 0 < fraction <= 1:
+        raise ValueError(f"budget fraction must be in (0, 1], got {fraction}")
+    if n_selectable <= 0:
+        raise ValueError("universe is empty")
+    return int(n_selectable * fraction + 0.5)
 
 
 def config_hash(cfg: Any) -> str:

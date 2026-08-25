@@ -16,7 +16,10 @@
 # this template targets the cluster and is exercised only there.
 #
 # Per-array-task parameters come from a run plan TSV (one row per task index):
-#   columns:  track  subset_manifest  seed  config_yaml
+#   columns:  track  subset_manifest  seed  config_yaml  keep_local_traj
+#   keep_local_traj=1 marks a LESS-designated run: it alone retains FULL
+#   trajectory checkpoints locally; all other runs stream ckpts to the NAS and
+#   keep only last.ckpt locally (PROTOCOL.md storage policy).
 # Usage on the cluster:
 #   sbatch --export=ALL,SPELL_RUN_PLAN=/path/to/plan.tsv slurm/template.sbatch
 
@@ -39,14 +42,38 @@ TRACK=${ROW[0]}
 MANIFEST=${ROW[1]}
 SEED=${ROW[2]}
 CFG=${ROW[3]}
+KEEP_LOCAL_TRAJ=${ROW[4]:-0}
+
+# --- storage gate (PROTOCOL.md): abort BEFORE training if any fs is low ---
+python scripts/check_storage.py --strict
+
+RUN_ID="${TRACK}/$(basename "$MANIFEST" .txt)_seed${SEED}_job${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+NAS_RUN_DIR="${SPELL_NAS_ROOT:-/share1/NAS/spell-rq2}/${RUN_ID}"
+LOCAL_RUN_DIR="checkpoints/${RUN_ID}"
+mkdir -p "$NAS_RUN_DIR" "$LOCAL_RUN_DIR"
 
 echo "[spell] track=$TRACK manifest=$MANIFEST seed=$SEED cfg=$CFG task=$SLURM_ARRAY_TASK_ID"
+echo "[spell] nas_run_dir=$NAS_RUN_DIR local_run_dir=$LOCAL_RUN_DIR keep_local_traj=$KEEP_LOCAL_TRAJ"
+
+# Trainer contract (implemented Phase 1+):
+#   * every ckpt is written THROUGH to $NAS_RUN_DIR as it is created;
+#   * locally, only last.ckpt survives (updated atomically per save);
+#   * keep_local_traj=1 (LESS-designated) keeps the full local trajectory.
+if [ "$KEEP_LOCAL_TRAJ" != "1" ]; then
+    export SPELL_CKPT_POLICY=nas_write_through   # local keeps only last.ckpt
+else
+    export SPELL_CKPT_POLICY=keep_local_trajectory
+fi
 
 python "scripts/train_${TRACK}.py" \
     --config "$CFG" \
     --subset-manifest "$MANIFEST" \
     --seed "$SEED" \
-    --output-dir "checkpoints/${TRACK}/$(basename "$MANIFEST" .txt)_seed${SEED}" \
+    --output-dir "$LOCAL_RUN_DIR" \
+    --nas-dir "$NAS_RUN_DIR" \
     --run-manifest-out "outputs/run_manifest_${TRACK}_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}.json"
+
+# Post-run cleanup: enforce "local copies removed except last.ckpt".
+find "$LOCAL_RUN_DIR" -name '*.ckpt' ! -name 'last.ckpt' -delete
 
 echo "[spell] done"
