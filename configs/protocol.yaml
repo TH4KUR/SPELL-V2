@@ -1,0 +1,14 @@
+# LOCKED protocol constants — frozen after Phase 0. Changing anything here
+# invalidates every run_manifest.json hash. See PROTOCOL.md for the rules these
+# constants encode.
+sample_rate: 16000        # Hz (verified against mp4/wav streams)
+token_hz: 50              # verified: T == ceil(n_samples / (sample_rate/token_hz))
+codebook_size: 1024       # verified: token values span [0, 1023]
+n_rvq_streams: 8          # verified: tokens are [8, T]
+crop_frames: 50           # canonical Track-A eval/training crop = 1 s of frames
+crop_samples: 16000       # MUST equal crop_frames * sample_rate / token_hz (validated)
+min_crop_frames: 50       # utterances shorter than 1 s are excluded from crop sampling
+token_pad_id: -1          # padding sentinel; real codes occupy [0, 1023] so pad must be < 0
+budget_fraction: 0.25     # selection budget = 25% of corpus (~7.6 h)
+val_size_utts: 2000       # internal validation set size (video-disjoint holdout)
+split_seed: 20260825      # seed for the frozen internal split build

@@ -1,0 +1,25 @@
+{
+  "seed": 20260825,
+  "val_size_target_utts": 2000,
+  "video_disjoint": true,
+  "counts": {
+    "train": 29981,
+    "val": 2001,
+    "test": 1321
+  },
+  "hours": {
+    "train": 28.541,
+    "val": 1.861
+  },
+  "files": {
+    "train_ids.txt": {
+      "sha256": "51ee7cec96c79e3cc8052db28bb79240023cad0943662726c7ff5016ddfcf3cd"
+    },
+    "val_ids.txt": {
+      "sha256": "2d9144556f06318a2ecf566305e75ee59e040c1990311b8ccaa50382709987a2"
+    },
+    "test_pointers.tsv": {
+      "sha256": "22ab6553074318c4a08217db0ee8c2a7c80cf3d7da52ca93bc06e575cd9836c8"
+    }
+  }
+}

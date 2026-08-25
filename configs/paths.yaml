@@ -1,0 +1,5 @@
+# Filesystem layout. Relative paths resolve against the project root.
+dataset_root: datasets/LRS3
+subsets_dir: subsets
+index_path: data_index.parquet       # produced by scripts/audit_data.py
+splits_dir: subsets/splits           # frozen internal split lists (committed)

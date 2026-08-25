@@ -1,0 +1,41 @@
+# Track A — Vocos-style vocoder (generative). SKELETON ONLY (implemented Phase 2).
+# All hyperparameters below are PROVISIONAL pending the 100% pilot; they are then
+# frozen for every subset run — no per-subset tuning, ever (PROTOCOL.md rule 2).
+track: vocoder
+
+model:
+  # PROVISIONAL — ConvNeXt backbone + iSTFT head
+  hidden_dim: 512
+  n_convnext_blocks: 8
+  convnext_layer_scale_init: 1e-6
+  istft_n_fft: 1024
+  istft_hop_samples: 256          # = sample_rate / token_hz → mel frames align to RVQ frames
+
+discriminators:
+  # PROVISIONAL — HiFi-GAN MPD + MSD
+  mpd_periods: [2, 3, 5, 7, 11]
+  msd_use_spectral_norm: true
+
+losses:
+  # PROVISIONAL weights
+  mel_l1_weight: 45.0
+  feature_matching_weight: 2.0
+  adv_weight: 1.0
+  mel_n_fft: [1024, 2048, 512]    # multi-resolution
+  mel_hop: [256, 512, 128]
+  mel_win: [1024, 2048, 512]
+
+training:
+  # PROVISIONAL
+  batch_size: 16
+  crop_frames: null               # null → use protocol.crop_frames (50)
+  lr_g: 2.0e-4
+  lr_d: 2.0e-4
+  betas: [0.8, 0.99]
+  gamma_lr_decay: 0.999
+  ema_decay: 0.999                # generator EMA used for ALL evaluation
+  n_epochs: null                  # set per-run by the equal-epochs protocol driver
+
+logging:
+  grad_norm_log_every_batches: 50   # ∇G / ∇D L2 norms
+  ckpt_every_epochs: 5              # feeds LESS trajectories later
