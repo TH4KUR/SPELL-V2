@@ -56,10 +56,12 @@ def sha256_of(path: Path, chunk: int = 1 << 20) -> str:
 
 def convert_audio(src: Path, dst: Path) -> None:
     """Decode any input container to 16 kHz mono FLAC (lossless)."""
-    tmp = dst.with_suffix(dst.suffix + ".part")
+    tmp = dst.with_suffix(dst.suffix + ".part")   # atomic-ish write, renamed on success
     subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-i", str(src),
-         "-vn", "-ac", "1", "-ar", "16000", "-c:a", "flac", str(tmp)],
+        ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vn",
+         "-ac", "1", "-ar", "16000", "-c:a", "flac",
+         "-f", "flac",  # .part hides the extension -> format must be explicit
+         str(tmp)],
         check=True,
     )
     os.replace(tmp, dst)
@@ -111,6 +113,14 @@ def run_job(job: dict, source_root: Path, dest_root: Path) -> dict | None:
     return {"rel": job["rel"], "kind": job["kind"], "bytes": dst.stat().st_size}
 
 
+def _count_inodes(root: Path) -> int:
+    """Files + directories under root (the real /home inode cost)."""
+    n = 0
+    for _dirpath, dirs, files in os.walk(root):
+        n += len(dirs) + len(files)
+    return n
+
+
 def build_manifest(dest: Path, workers: int) -> tuple[pd.DataFrame, dict]:
     rows = []
     files = sorted(p for p in dest.rglob("*") if p.is_file() and p.name != "manifest_summary.json"
@@ -125,7 +135,7 @@ def build_manifest(dest: Path, workers: int) -> tuple[pd.DataFrame, dict]:
     df = pd.DataFrame(rows)
     summary = {
         "files_total": len(df),
-        "inodes_estimate": int(len(df) + df["relpath"].str.count("/").add(1).sum()),
+        "inodes_actual": _count_inodes(dest),
         "bytes_total_gb": round(float(df["bytes"].sum()) / 1e9, 3),
         "by_kind": {k: {"count": int(len(g)), "gb": round(float(g['bytes'].sum()) / 1e9, 3)}
                     for k, g in df.groupby("kind")},
@@ -200,9 +210,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"wrote {dest/'manifest.parquet'} + manifest_summary.json")
 
     # inode sanity vs Ada quota (300k): the staged tree itself must fit comfortably
-    est = summary["inodes_estimate"]
-    if est > 250_000:
-        print(f"WARNING: ~{est} inodes approaches the 300k /home quota")
+    inodes = summary["inodes_actual"]
+    if inodes > 250_000:
+        print(f"WARNING: {inodes} inodes approaches the 300k /home quota")
     return 0
 
 
