@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import config
@@ -49,3 +51,39 @@ def test_protocol_rejects_in_range_pad():
     }
     with pytest.raises(ValueError, match="token_pad_id"):
         config.ProtocolConfig.from_dict(d)
+
+
+def _paths_dict(tmp_path):
+    return {
+        "dataset_root": str(tmp_path / "datasets/LRS3"),
+        "subsets_dir": str(tmp_path / "subsets"),
+        "index_path": str(tmp_path / "data_index.parquet"),
+        "splits_dir": str(tmp_path / "subsets/splits"),
+        "runs_dir": str(tmp_path / "runs"),
+        "archive_mode": "relay",
+        "archive_root": "/share1/NAS/spell-rq2",
+        "home_warn_gb": 20, "home_abort_gb": 23, "inode_warn_k": 240,
+    }
+
+
+def test_paths_rejects_non_relay_archive_mode(tmp_path):
+    d = _paths_dict(tmp_path)
+    d["archive_mode"] = "direct"   # LOCKED off: compute nodes cannot see /share1
+    with pytest.raises(ValueError, match="relay"):
+        config.PathsConfig.from_dict(d)
+
+
+def test_paths_rejects_inverted_home_gates(tmp_path):
+    d = _paths_dict(tmp_path)
+    d["home_warn_gb"], d["home_abort_gb"] = 25, 23   # warn above abort is nonsense
+    with pytest.raises(ValueError, match="home gates"):
+        config.PathsConfig.from_dict(d)
+
+
+def test_paths_env_overrides(tmp_path, monkeypatch):
+    monkeypatch.setenv("SPELL_DATA_ROOT", str(tmp_path / "ada_data"))
+    monkeypatch.setenv("SPELL_ARCHIVE_ROOT", "/share7/somewhere")
+    cfg = config.PathsConfig.from_dict(_paths_dict(tmp_path))
+    assert cfg.dataset_root == (tmp_path / "ada_data").resolve()
+    assert cfg.archive_root == Path("/share7/somewhere")
+    assert cfg.archive_mode == "relay"

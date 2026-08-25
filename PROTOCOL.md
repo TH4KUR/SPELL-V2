@@ -64,42 +64,72 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
 - Transcript confidence (`Conf: 1–6`) is stored in `data_index.parquet` as metadata;
   it is not used by any Phase-0 decision.
 
-## 5. Storage policy
+## 5. Storage & environment policy (Ada revision — supersedes NAS write-through)
 
-- Trajectory checkpoints **stream to the NAS on write** (`nas_root`, default
-  `/share1/NAS/spell-rq2`, override with `SPELL_NAS_ROOT`); local run directories keep
-  ONLY `last.ckpt`.
-- **df gate before every array launch**: `scripts/check_storage.py --strict` runs at job
-  start in `slurm/template.sbatch`; any failure aborts the task before training.
-  Locally the gate runs soft via `scripts/debug.sh` (dev boxes have no `/share1`).
-- Only **LESS-designated runs** (`keep_local_traj=1` column in the run plan TSV) retain
-  full trajectories locally.
+**Quotas:** `/home` = 30 GB + 300k inodes; `/share1` = 100 GB but ~3200-inode cap.
+Host is CentOS 7 / GLIBC 2.17 despite u22 module names — binary deps must be
+manylinux2014-compatible or cluster-module-provided.
+
+1. **Dataset location**: staged dataset lives ONLY in `$HOME/spell/data`
+   (`scripts/stage_to_ada.py`: tokens + transcripts + 16 kHz mono FLAC, sha256
+   manifest). No per-utterance files anywhere else; NEVER on /share1.
+2. **Relay archiving, LOCKED**: compute nodes CANNOT see /share1 (verified; mounts vary
+   per node). Runs bundle under `$HOME/spell/runs/<run_id>/` (ckpts + metrics.parquet,
+   ≤~20 files per run) with a `COMPLETED` marker written by an EXIT trap;
+   `scripts/drain_runs.sh` verifies and moves bundles to `/share1/NAS/spell-rq2` from a
+   mounted node. Direct writes outside $HOME are rejected by policy everywhere
+   (`archive_mode != "relay"` raises).
+3. **$HOME gates before every launch**: usage warn ≥20 GB, abort ≥23 GB;
+   inode warn at 240k. `scripts/check_storage.py --strict` runs at job start in the
+   SLURM template; soft mode locally.
+4. **Hardware drift guard (locked)**: a physically swapped RTX 3080 was observed inside
+   the 2080 Ti pool (gnode077). Every train/eval entrypoint calls
+   `hardware_guard.assert_gpu()` — aborts with hostname unless device 0 is an
+   "RTX 2080 Ti". Formal runs are 2080 Ti-constrained PERMANENTLY (ihub/3080 partition
+   inaccessible — do not reference it in configs). Driver range 570–580 is fine for
+   cu124 wheels; logged in manifests, not gated.
+5. **Environment policy**: module `u22/python/3.12.4` + venv in $HOME; ALL pip installs
+   run INSIDE srun sessions (u22-cpu, `--mem=16G`) — never on the RAM-limited login
+   node; `--no-cache-dir` always; GLIBC fallback ladder for torch ends in a locked pin
+   committed to `requirements.lock`.
 
 ## 6. Run manifest contract
 
 Every training run writes `run_manifest.json` next to its checkpoints:
 subset manifest path, seed, config hash (`config.config_hash`, sha256 over canonicalized
-YAML), git SHA, protocol version (= this file's revision), start/end timestamps.
+YAML), git SHA, gpu_name + driver version, protocol version (= this file's revision),
+start/end timestamps.
 
-## 7. Deferred-but-revivable research questions
+## 7. Phase gates
+
+- **Phase 0b (BLOCKING)**: stage the dataset to Ada (`$HOME/spell/data`) via
+  `scripts/stage_to_ada.py`, sha256-manifested, then `--verify` clean. No Phase-1
+  training code runs before this gate passes.
+- Phase 1+ follow PLAN.md's phase order with the pilot gates defined there.
+
+## 8. Deferred-but-revivable research questions
 
 RQ1 (layer-view ablation) and RQ3 (transfer matrix) stay out of scope; cheap insurance:
 tokens are already organized per-layer-view, per-sample losses + 5-epoch checkpoints are
 kept for every grid run, and every subset carries characterization stats.
 
-## 8. How to run things
+## 9. How to run things
 
-All commands run from the project root inside the pymax venv
-(`source ~/bin/pymax/bin/activate`) so flat root modules import cleanly:
+Laptop: pymax venv (`source ~/bin/pymax/bin/activate`). Ada: venv in $HOME built per §5.5.
+All commands run from the repo root so flat root modules import cleanly:
 
 ```bash
 python scripts/audit_data.py                 # rebuild data_index.parquet + audit report
 python scripts/build_splits.py               # rebuild frozen split files (byte-stable)
-python scripts/check_storage.py              # storage gate (--strict for launches)
+python scripts/check_storage.py [--strict]   # $HOME quota gate (warn 20G / abort 23G)
+python scripts/stage_to_ada.py               # PHASE 0b: stage dataset + sha256 manifest
+python scripts/stage_to_ada.py --verify      # re-hash staged tree vs manifest
+bash scripts/drain_runs.sh -n                # preview relay-archive drain
 python scripts/spot_check.py                 # decode 10 utts -> outputs/spotcheck/ (ear check)
 pytest -q                                    # unit tests incl. crop alignment proof
 bash scripts/debug.sh                        # single-GPU debug launcher (tests + smoke)
 ```
 
-Revision history: `universe-v2` (post-audit amendment) re-froze the internal split over
-the selectable universe; the original Phase-0 lists remain in git history.
+Revision history: `universe-v2` re-froze the internal split over the selectable universe;
+`ada-storage-rev1` superseded NAS write-through with relay archiving + HOME gates +
+hardware drift guard. Earlier wording remains in git history.

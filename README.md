@@ -52,8 +52,23 @@ bash scripts/debug.sh             # single-GPU debug launcher
 | Internal val | video-disjoint, ≥2000 utts, seed 20260825 (`subsets/splits/`, sha256-frozen) |
 | Official test | quarantined until the final-eval module |
 
-## Storage
+## Ada cluster (compute target)
 
-Trajectory checkpoints stream to the NAS on write (`SPELL_NAS_ROOT`, default
-`/share1/NAS/spell-rq2`); local dirs keep only `last.ckpt`; only LESS-designated runs keep
-full local trajectories. See PROTOCOL.md §5.
+Formal runs run on Ada; this laptop is the authoring/pilot box.
+
+| Constraint | Value |
+| --- | --- |
+| GPU | **RTX 2080 Ti, permanent** — `hardware_guard.assert_gpu()` aborts any drifted card (a 3080 was observed in the pool, gnode077) |
+| Host | CentOS 7 / GLIBC 2.17 → manylinux2014-compatible wheels only |
+| Modules | `u22/python/3.12.4`, venv in `$HOME` |
+| pip policy | only inside srun sessions (`u22-cpu`, `--mem=16G`), never on the login node; always `--no-cache-dir`; final pins in `requirements.lock` |
+| Storage | dataset staged at `$HOME/spell/data` (FLAC+tokens+transcripts, sha256 manifest); runs bundle in `$HOME/spell/runs/<id>/` (≤~20 files); HOME gates warn 20 GB / abort 23 GB |
+| Archive | **relay-locked** — compute nodes can't see /share1; `scripts/drain_runs.sh` moves bundles from a mounted node |
+
+**Phase 0b (blocking):** stage + verify the dataset on Ada before any Phase-1 training:
+
+```bash
+python scripts/stage_to_ada.py --dest ~/spell/data   # FLAC + tokens + transcripts + sha256 manifest
+python scripts/stage_to_ada.py --verify              # must be clean before Phase 1
+```
+

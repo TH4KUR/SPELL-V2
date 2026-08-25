@@ -30,15 +30,18 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class PathsConfig:
-    """Filesystem layout + storage-policy thresholds (see configs/paths.yaml)."""
+    """Filesystem layout + Ada storage policy (see configs/paths.yaml)."""
 
     dataset_root: Path
     subsets_dir: Path
     index_path: Path
     splits_dir: Path
-    nas_root: Path
-    min_free_gb_local: float
-    min_free_gb_nas: float
+    runs_dir: Path
+    archive_mode: str                 # LOCKED to "relay" (protocol revision)
+    archive_root: Path                # drain destination; NEVER touched by compute jobs
+    home_warn_gb: float               # $HOME usage gates (quota 30G)
+    home_abort_gb: float
+    inode_warn_k: int                 # $HOME inode warn threshold (quota 300k)
 
     @classmethod
     def from_dict(cls, d: dict, base: Path = PROJECT_ROOT) -> "PathsConfig":
@@ -48,16 +51,27 @@ class PathsConfig:
             p = Path(v)
             return p if p.is_absolute() else (base / p).resolve()
 
-        nas = Path(os.environ.get("SPELL_NAS_ROOT", d["nas_root"]))
-        return cls(
-            dataset_root=_p(d["dataset_root"]),
+        cfg = cls(
+            dataset_root=_p(os.environ.get("SPELL_DATA_ROOT", d["dataset_root"])),
             subsets_dir=_p(d["subsets_dir"]),
             index_path=_p(d["index_path"]),
             splits_dir=_p(d["splits_dir"]),
-            nas_root=nas,
-            min_free_gb_local=float(d["min_free_gb_local"]),
-            min_free_gb_nas=float(d["min_free_gb_nas"]),
+            runs_dir=_p(d["runs_dir"]),
+            archive_mode=str(d["archive_mode"]),
+            archive_root=Path(os.environ.get("SPELL_ARCHIVE_ROOT", d["archive_root"])),
+            home_warn_gb=float(d["home_warn_gb"]),
+            home_abort_gb=float(d["home_abort_gb"]),
+            inode_warn_k=int(d["inode_warn_k"]),
         )
+        if cfg.archive_mode != "relay":
+            raise ValueError(
+                f"archive_mode={cfg.archive_mode!r}: LOCKED to 'relay' — /share1 is "
+                "unreachable from Ada compute nodes (verified); direct writes are "
+                "rejected by policy, not merely discouraged"
+            )
+        if not 0 < cfg.home_warn_gb < cfg.home_abort_gb:
+            raise ValueError("home gates must satisfy 0 < warn < abort")
+        return cfg
 
 
 @dataclass(frozen=True)

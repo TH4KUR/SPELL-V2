@@ -1,5 +1,7 @@
 # Data (regenerable or third-party — never commit)
 datasets/
+data/
+runs/
 *.parquet
 wandb/
 outputs/
