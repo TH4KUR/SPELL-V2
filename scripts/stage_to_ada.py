@@ -191,16 +191,19 @@ def main(argv: list[str] | None = None) -> int:
         return verify(dest, args.workers)
 
     jobs = plan_jobs(args.source, dest, args.limit)
-    print(f"staging {len(jobs)} files -> {dest} with {args.workers} workers")
-    done = skipped = 0
-    with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        for res in tqdm(ex.map(lambda j: run_job(j, args.source, dest), jobs),
-                        total=len(jobs), desc="stage"):
-            if res is None:
-                skipped += 1
-            else:
-                done += 1
-    print(f"staged {done} files ({skipped} sources absent)")
+    if not args.skip_stage:
+        print(f"staging {len(jobs)} files -> {dest} with {args.workers} workers")
+        done = skipped = 0
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            for res in tqdm(ex.map(lambda j: run_job(j, args.source, dest), jobs),
+                            total=len(jobs), desc="stage"):
+                if res is None:
+                    skipped += 1
+                else:
+                    done += 1
+        print(f"staged {done} files ({skipped} sources absent)")
+    else:
+        print(f"--skip-stage: manifest-only pass over existing tree at {dest}")
 
     df, summary = build_manifest(dest, args.workers)
     df.to_parquet(dest / "manifest.parquet", index=False)
