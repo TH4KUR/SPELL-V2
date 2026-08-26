@@ -112,7 +112,7 @@ laptop filesystem.
 | Ada working repo | `~/spell/repo` |
 | Ada bare git remote | `~/spell/repo.git` (laptop reaches it via its `ada` remote — see §5.7) |
 | Ada python env | `~/envs/spell` (torch 2.6.0+cu124) |
-| Data root on Ada | `$HOME/spell/data` (staged Phase-0b tree; verified 99,909 files) |
+| Data root on Ada | `$HOME/spell/data` (staged Phase-0b tree; verified 99,909 files). Runtime selection via `SPELL_DATA_ROOT` — template self-defaults it (§10 item 7) |
 | Canonical archive | `/share1/$USER/spell/runs/` |
 | Relay directory | `$HOME/spell/runs/` (relay `runs_dir`; `drain_runs.sh` moves relay → archive) |
 
@@ -298,3 +298,15 @@ hardware drift guard. Earlier wording remains in git history.
    (`paths.py` + consumers) + `docs/layout.md` update + tests (layout suite +
    regression UID `0D9QIG36J9Q/50001`). Half-migrated states are protocol
    violations even when each half is individually correct.
+7. **RUNTIME DATA ROOT IS EXPLICIT**: `configs/paths.yaml`'s `dataset_root`
+   default (`datasets/LRS3`) is the Phase-0 RAW audit source and exists for
+   audit tooling ONLY — it is never a legal training-time root under staged
+   layout. Therefore: staged mode REFUSES any root shaped `…/datasets/LRS3`
+   at construction (`paths.LayoutError` with the remedy attached); runtime
+   selection happens via `SPELL_DATA_ROOT`, which `slurm/template.sbatch`
+   defaults to the §5.0 constant (`$HOME/spell/data`), exports, existence-gates,
+   and echoes in its banner — interactive shells must export it themselves.
+   A staged run WITHOUT an explicit root is a configuration error, not a
+   fallback. (Birthed 2026-08-27 when the first template-based resubmit ran
+   without the env var and aborted cleanly at the new preflight — the gate
+   working as designed; pinned by tests incl. template grep-pins.)

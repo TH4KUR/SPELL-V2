@@ -240,6 +240,20 @@ def test_docs_pin_spelling_of_the_data_root_requirement():
     assert "SPELL_DATA_ROOT=$HOME/spell/data" in text
 
 
+def test_runtime_entrypoints_wire_preflight_gate():
+    """Static pin on the INCIDENT chain: every epoch-facing entrypoint must
+    import the path authority, print its resolved root at startup, and resolve
+    manifest UIDs through it BEFORE any training step. Deleting this wiring has
+    to break the suite — not be discovered by the next cluster failure."""
+    for script in ("train_track_b.py", "evaluate_track_b.py",
+                   "overfit_one_batch.py"):
+        text = (PROJECT_ROOT / "scripts" / script).read_text(encoding="utf-8")
+        assert "import paths as data_paths" in text, f"{script}: authority import"
+        assert "[spell] data_root=" in text, f"{script}: startup banner"
+        assert ("preflight_resolve(" in text) or (
+            "data_paths.preflight(" in text), f"{script}: preflight gate"
+
+
 def test_preflight_empty_record_list_is_loud(tmp_path):
     with pytest.raises(LayoutError, match="empty record list"):
         DataPaths(root=tmp_path, layout="staged").preflight([])
