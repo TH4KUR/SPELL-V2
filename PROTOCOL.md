@@ -84,8 +84,9 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
 16. **Dev-GPU bypass**: laptop bring-up (`pytest`, `overfit_one_batch`, small smoke
     runs on the RTX 4060) is permitted via env `SPELL_DEV_GPU=1`, which replaces the
     drift-guard abort with a loud banner. Formal runs must never set it; formal
-    verification = one-time CPU pytest under the pinned Ada env (u22, --gres=gpu:0)
-    before pilot submission, then both pilots on 2080 Ti nodes only.
+    verification = one-time CPU pytest under the pinned Ada env (full §5.8
+    constants incl. constraint/exclude, plus --gres=gpu:0) before pilot
+    submission, then both pilots on 2080 Ti nodes only.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
@@ -157,13 +158,17 @@ laptop filesystem.
    `git clone`, `git remote add`) — they assume this state and contain only
    INCREMENTAL commands. Remote examples in handoffs use full SSH URLs or the
    `ada`/`ada:` alias form, never local paths.
-8. **Scheduling constants for every sbatch/srun/command template** (no drift):
-   `-p u22 -A research --qos=medium --constraint=2080ti --exclude=gnode066`;
-   CPU-only jobs additionally `--gres=gpu:0`. Interactive GPU allocations are never
-   parked idle — release with `exit`; before submitting,
-   `squeue --me` must show zero stale rows. `SLURM_JOB_GPUS` is unreliable on this
-   cluster: `CUDA_VISIBLE_DEVICES` / `torch.cuda.get_device_name()` are the source
-   of GPU truth (the drift guard reads exactly those).
+8. **Scheduling constants for EVERY sbatch/srun block, GPU or CPU alike** (no drift):
+   `-p u22 -A research --qos=medium --constraint=2080ti --exclude=gnode066`.
+   The FULL string — constraint and exclude included — applies to CPU-only jobs
+   too (those add `--gres=gpu:0`). Rationale: uniform blocks are copy-paste safe,
+   they insure against accidental CUDA touchpoints landing on a drifted card or
+   gnode066, and carrying unused filters costs nothing in the queue.
+   Interactive GPU allocations are never parked idle — release with `exit`;
+   before submitting, `squeue --me` must show zero stale rows.
+   `SLURM_JOB_GPUS` is unreliable on this cluster:
+   `CUDA_VISIBLE_DEVICES` / `torch.cuda.get_device_name()` are the source of
+   GPU truth (the drift guard reads exactly those).
 9. **Adoption rule going forward**: every future sbatch/srun/command block emitted
    in this project MUST use exactly the §5.0 names and §5.8 scheduling constants;
    if a handoff contains a stale path/name (`~/pymax`, missing `-p u22`,
