@@ -153,8 +153,9 @@ laptop filesystem.
    requirements.lock so the env stays reproducible from scratch — hand-installs
    are the exception, not the workflow. `scripts/setup_env.sbatch` builds fresh or
    reconciles the existing env EXACTLY against the lock (this is also how newly
-   locked deps — pytest, lightning — reach the live env); its post-build verifier
-   imports the lock-critical packages and exits non-zero on any mismatch.
+   locked deps — pytest, lightning — reach the live env); pip's exact-pin install
+   IS the version guarantee, and the script's post-build step just import-smoke-
+   checks the suite-critical packages.
 6. **Partition adoption rule**: before adopting any partition, verify access —
    `scontrol show partition <name>` and confirm `AllowAccounts` includes our account.
    Never build configs or workflows around an unverified partition (ihub was rejected

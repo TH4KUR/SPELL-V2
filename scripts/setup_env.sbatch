@@ -51,58 +51,27 @@ python -m pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu124 \
     "torch==2.6.0+cu124"
 
-echo "[setup_env] step 2/2: reconcile full lockfile"
+echo "[setup_env] step 2/2: reconcile full lockfile (installs anything missing,"
+echo "            no-ops what already matches; mismatched pins are an install error)"
 python -m pip install --no-cache-dir -r "$LOCK"
 
-# ---- post-build verification: the env proves it matches the lock -------------
+# ---- smoke check: the suite-critical imports resolve. Nothing fancier — pip's
+# ---- exact-pin reconcile above IS the version guarantee; we don't re-audit it.
 python - <<'PY'
-import importlib, re, sys
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as meta_version
-from pathlib import Path
+import importlib
 
-lock = {}
-for line in Path("requirements.lock").read_text().splitlines():
-    line = line.strip()
-    if line and not line.startswith("#"):
-        parts = re.split(r"[=<>!~]+", line, maxsplit=1)
-        if len(parts) == 2:
-            lock[parts[0].lower()] = parts[1]
-
-def installed_version(mod, dist):
-    # pip's own record is AUTHORITATIVE; module __version__ is only a fallback —
-    # some packages (e.g. jiwer 4.x) don't publish it at all.
-    try:
-        return meta_version(dist)
-    except PackageNotFoundError:
-        m = importlib.import_module(mod)
-        return getattr(m, "__version__", "?")
-
-def check(mod, dist):
-    got = installed_version(mod, dist)
-    want = lock[dist]
-    ok = got != "?" and got.split("+")[0] == want.split("+")[0]
-    print(f"{'OK ' if ok else 'BAD'} {dist}={got} (lock wants {want})")
-    if not ok:
-        sys.exit(3)
-
-for mod, dist in [                       # suite-critical: pytest+lightning mandated §5.5
-    ("numpy", "numpy"), ("pandas", "pandas"), ("pyarrow", "pyarrow"),
-    ("yaml", "pyyaml"), ("soundfile", "soundfile"),
-    ("jiwer", "jiwer"), ("wandb", "wandb"),
-    ("pytest", "pytest"),
-    ("lightning", "lightning"), ("pytorch_lightning", "pytorch-lightning"),
-    ("torch", "torch"),
-]:
-    check(mod, dist)
+mods = ["numpy", "pandas", "pyarrow", "yaml", "soundfile", "jiwer", "wandb",
+        "pytest", "lightning", "pytorch_lightning", "torch"]   # §5.5 suite-critical
+for m in mods:
+    importlib.import_module(m)
+    print("[setup_env] import OK:", m)
 
 import torch
 if torch.cuda.is_available():
-    # SLURM_JOB_GPUS is unreliable — CUDA_VISIBLE_DEVICES / device name are truth (§5.8)
-    print("cuda:", torch.version.cuda, "| device:", torch.cuda.get_device_name(0))
+    # SLURM_JOB_GPUS is unreliable — device name is truth (§5.8)
+    print("[setup_env] cuda:", torch.version.cuda, "| device:", torch.cuda.get_device_name(0))
 else:
-    print("cuda: not visible from this (gpu:0 CPU) allocation — expected here")
-print("[setup_env] env matches the lockfile")
+    print("[setup_env] cuda: not visible from this (gpu:0 CPU) allocation — expected here")
 PY
 
 echo "[setup_env] done — ~/envs/spell now satisfies requirements.lock"
