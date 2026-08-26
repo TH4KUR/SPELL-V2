@@ -89,9 +89,15 @@ manylinux2014-compatible or cluster-module-provided.
    inaccessible — do not reference it in configs). Driver range 570–580 is fine for
    cu124 wheels; logged in manifests, not gated.
 5. **Environment policy**: module `u22/python/3.12.4` + venv in $HOME; ALL pip installs
-   run INSIDE srun sessions (u22-cpu, `--mem=16G`) — never on the RAM-limited login
-   node; `--no-cache-dir` always; GLIBC fallback ladder for torch ends in a locked pin
+   run INSIDE srun sessions — never on the RAM-limited login node. CPU-only jobs (env
+   builds, preprocessing, selection scripts) go to partition `u22` with
+   `--gres=gpu:0 --mem=16G`; **`u22-cpu` is devalab-restricted and must not be used**.
+   `--no-cache-dir` always; GLIBC fallback ladder for torch ends in a locked pin
    committed to `requirements.lock`.
+6. **Partition adoption rule**: before adopting any partition, verify access —
+   `scontrol show partition <name>` and confirm `AllowAccounts` includes our account.
+   Never build configs or workflows around an unverified partition (ihub was rejected
+   this way; u22-cpu-style surprises cost a revision).
 
 ## 6. Run manifest contract
 
