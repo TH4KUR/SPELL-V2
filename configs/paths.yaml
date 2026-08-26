@@ -12,7 +12,8 @@ runs_dir: runs                      # per-run bundles: ckpts + metrics.parquet (
 # node; verified unreachable). Runs bundle in runs_dir; scripts/drain_runs.sh
 # moves bundles to archive_root from a node where /share1 is mounted.
 archive_mode: relay                 # LOCKED to relay by protocol revision; 'direct' rejected
-archive_root: /share1/NAS/spell-rq2 # env override: SPELL_ARCHIVE_ROOT
+archive_root: /share1/$USER/spell/runs   # FROZEN canonical archive (§5.0); $USER is
+                                    # expanded at load; env override: SPELL_ARCHIVE_ROOT
 
 # $HOME quota gates (/home: 30G + 300k inodes on Ada) — usage thresholds.
 home_warn_gb: 20                    # warn when $HOME usage exceeds this

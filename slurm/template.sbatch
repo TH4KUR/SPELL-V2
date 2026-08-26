@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=spell-rq2
-#SBATCH --account=${SPELL_SLURM_ACCOUNT:-CHANGE_ME}
-#SBATCH --partition=${SPELL_SLURM_PARTITION:-2080ti}
+#SBATCH -p u22 -A research --qos=medium          # FROZEN scheduling constants (§5.8)
+#SBATCH --constraint=2080ti --exclude=gnode066   # no-drift GPU pool + documented bad node
+#SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=12:00:00
@@ -12,20 +12,28 @@
 #SBATCH -o logs/%x-%A_%a.out
 #SBATCH -e logs/%x-%A_%a.err
 
-# SLURM array template — Ada revision (PROTOCOL.md §5 storage + hardware guard).
+# SLURM array template — Ada revision (PROTOCOL.md §5 + §5.0 frozen constants).
 #
 # HARD CONSTRAINTS (verified on the cluster):
 #   * Formal runs are 2080 Ti PERMANENTLY (ihub/3080 partition inaccessible).
 #     A drifted card (observed RTX 3080 on gnode077) must abort — the guard below.
 #   * Compute nodes CANNOT write /share1 (mounts vary per node). Everything is
 #     written under $HOME (quota 30G/300k inodes; gates warn 20G / abort 23G).
-#   * Relay archiving ONLY: bundles land in runs/<run_id>/ with a COMPLETED
-#     marker; scripts/drain_runs.sh moves them to /share1 from a mounted node.
+#   * Relay archiving ONLY: bundles land in runs/<run_id>/ under the relay dir
+#     ~/spell/runs with a COMPLETED marker; scripts/drain_runs.sh moves them to
+#     /share1/$USER/spell/runs from a mounted node (§5.0 canonical archive).
+#   * This job ALWAYS runs from ~/spell/repo, which is synced ONLY via git
+#     (§5.7): laptop pushes to ~/spell/repo.git, this checkout pulls. rsync or
+#     any bulk copy into it is FORBIDDEN (clobbers divergence).
+#   * SLURM_JOB_GPUS is unreliable here: CUDA_VISIBLE_DEVICES /
+#     torch.cuda.get_device_name() are the source of truth (assert_gpu reads them).
 #
 # Per-array-task parameters come from a run plan TSV (one row per task index):
 #   columns:  track  subset_manifest  seed  config_yaml  keep_local_traj
 # Usage:
-#   sbatch --export=ALL,SPELL_RUN_PLAN=/path/to/plan.tsv slurm/template.sbatch
+#   squeue --me                                   # MUST show zero stale rows first (§5.8)
+#   sbatch --export=ALL,SPELL_RUN_PLAN=$HOME/spell/repo/slurm/run_plan_pilots.tsv \
+#       slurm/template.sbatch                     # from ~/spell/repo
 
 set -euo pipefail
 
@@ -38,7 +46,7 @@ REPO_ROOT="${SLURM_SUBMIT_DIR}"
 cd "$REPO_ROOT"
 mkdir -p logs runs outputs checkpoints
 
-source "$HOME/pymax/bin/activate"    # venv lives in $HOME; built via srun pip installs only
+source "$HOME/envs/spell/bin/activate"   # FROZEN env name (§5.0); pinned torch 2.6.0+cu124
 
 PLAN="${SPELL_RUN_PLAN:?set SPELL_RUN_PLAN to the run-plan TSV}"
 readarray -t ROW < <(sed -n "$((SLURM_ARRAY_TASK_ID + 2))p" "$PLAN")   # +2: header+comment lines

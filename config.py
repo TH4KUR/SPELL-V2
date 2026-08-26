@@ -63,7 +63,9 @@ class PathsConfig:
             splits_dir=_p(d["splits_dir"]),
             runs_dir=_p(d["runs_dir"]),
             archive_mode=str(d["archive_mode"]),
-            archive_root=Path(os.environ.get("SPELL_ARCHIVE_ROOT", d["archive_root"])),
+            # canonical archive carries $USER (§5.0) — expanded at load like the override
+            archive_root=Path(os.path.expandvars(
+                os.environ.get("SPELL_ARCHIVE_ROOT", d["archive_root"]))),
             home_warn_gb=float(d["home_warn_gb"]),
             home_abort_gb=float(d["home_abort_gb"]),
             inode_warn_k=int(d["inode_warn_k"]),

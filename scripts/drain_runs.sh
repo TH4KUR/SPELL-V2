@@ -9,13 +9,13 @@
 # <=~20 files per run). Never place loose per-utterance files on /share1.
 #
 # Usage:
-#   scripts/drain_runs.sh [--archive /share1/NAS/spell-rq2] [--runs-dir runs] [-n|--dry-run] [RUN_ID...]
+#   scripts/drain_runs.sh [--archive "/share1/$USER/spell/runs"] [--runs-dir runs] [-n|--dry-run] [RUN_ID...]
 #     RUN_ID omitted -> drain every bundle containing a COMPLETED marker.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-ARCHIVE="${SPELL_ARCHIVE_ROOT:-/share1/NAS/spell-rq2}"
+ARCHIVE="${SPELL_ARCHIVE_ROOT:-/share1/${USER}/spell/runs}"   # FROZEN archive (§5.0)
 RUNS_DIR="runs"
 DRY_RUN=0
 IDS=()

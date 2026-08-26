@@ -94,11 +94,28 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
 - Transcript confidence (`Conf: 1–6`) is stored in `data_index.parquet` as metadata;
   it is not used by any Phase-0 decision.
 
-## 5. Storage & environment policy (Ada revision — supersedes NAS write-through)
+## 5. Storage, names & environment policy (Ada revision — supersedes NAS write-through)
 
 **Quotas:** `/home` = 30 GB + 300k inodes; `/share1` = 100 GB but ~3200-inode cap.
 Host is CentOS 7 / GLIBC 2.17 despite u22 module names — binary deps must be
 manylinux2014-compatible or cluster-module-provided.
+
+### 5.0 Canonical names — FROZEN project constants
+
+These names/paths are FROZEN: do not rename, do not accept variants in scripts,
+configs, docs or handoffs. Laptop dir name `SPELL-V2` NEVER appears outside the
+laptop filesystem.
+
+| Role | Frozen constant |
+|---|---|
+| Ada working repo | `~/spell/repo` |
+| Ada bare git remote | `~/spell/repo.git` |
+| Ada python env | `~/envs/spell` (torch 2.6.0+cu124) |
+| Data root on Ada | `$HOME/spell/data` (staged Phase-0b tree; verified 99,909 files) |
+| Canonical archive | `/share1/$USER/spell/runs/` |
+| Relay directory | `$HOME/spell/runs/` (relay `runs_dir`; `drain_runs.sh` moves relay → archive) |
+
+`~/pymax` is a LAPTOP-ONLY fossil — its appearance anywhere Ada-facing is a bug.
 
 1. **Dataset location**: staged dataset lives ONLY in `$HOME/spell/data`
    (`scripts/stage_to_ada.py`: tokens + transcripts + 16 kHz mono FLAC, sha256
@@ -106,8 +123,8 @@ manylinux2014-compatible or cluster-module-provided.
 2. **Relay archiving, LOCKED**: compute nodes CANNOT see /share1 (verified; mounts vary
    per node). Runs bundle under `$HOME/spell/runs/<run_id>/` (ckpts + metrics.parquet,
    ≤~20 files per run) with a `COMPLETED` marker written by an EXIT trap;
-   `scripts/drain_runs.sh` verifies and moves bundles to `/share1/NAS/spell-rq2` from a
-   mounted node. Direct writes outside $HOME are rejected by policy everywhere
+   `scripts/drain_runs.sh` verifies and moves bundles to `/share1/$USER/spell/runs/`
+   from a mounted node. Direct writes outside $HOME are rejected by policy everywhere
    (`archive_mode != "relay"` raises).
 3. **$HOME gates before every launch**: usage warn ≥20 GB, abort ≥23 GB;
    inode warn at 240k. `scripts/check_storage.py --strict` runs at job start in the
@@ -118,17 +135,35 @@ manylinux2014-compatible or cluster-module-provided.
    "RTX 2080 Ti". Formal runs are 2080 Ti-constrained PERMANENTLY (ihub/3080 partition
    inaccessible — do not reference it in configs). Driver range 570–580 is fine for
    cu124 wheels; logged in manifests, not gated.
-5. **Environment policy**: module `u22/python/3.12.4` + venv in $HOME; ALL pip installs
-   run INSIDE srun sessions — never on the RAM-limited login node. CPU-only jobs (env
-   builds, preprocessing, selection scripts) go to partition `u22` with
-   `--gres=gpu:0 --mem=16G`; **`u22-cpu` is devalab-restricted and must not be used**.
-   `--no-cache-dir` always.
+5. **Environment policy**: module `u22/python/3.12.4` + env `~/envs/spell`; ALL pip
+   installs run INSIDE allocated srun sessions with `--no-cache-dir` — never on the
+   RAM-limited login node. CPU-only jobs (env builds, preprocessing, selection
+   scripts) add `--gres=gpu:0`; **`u22-cpu` is devalab-restricted and must not be used**.
+   Activation is ALWAYS `source ~/envs/spell/bin/activate`, after which invoke
+   `python` (never `python3`).
    **Environment status: BUILT AND PINNED — torch 2.6.0+cu124, GLIBC gate passed
    (Ada env commit 8c4c340). Never create a second venv under any circumstances.**
 6. **Partition adoption rule**: before adopting any partition, verify access —
    `scontrol show partition <name>` and confirm `AllowAccounts` includes our account.
    Never build configs or workflows around an unverified partition (ihub was rejected
    this way; u22-cpu-style surprises cost a revision).
+7. **Git transport (single rule)**: the repo moves between laptop and Ada ONLY via
+   git — laptop pushes to the Ada bare remote (`~/spell/repo.git`); jobs/consoles
+   pull inside `~/spell/repo`. `rsync --delete` (or any bulk-copy) into a git
+   working tree is FORBIDDEN: it silently clobbers divergence between the two
+   checkouts. Runbooks/handoffs must contain NO rsync-based copy-repo steps.
+8. **Scheduling constants for every sbatch/srun/command template** (no drift):
+   `-p u22 -A research --qos=medium --constraint=2080ti --exclude=gnode066`;
+   CPU-only jobs additionally `--gres=gpu:0`. Interactive GPU allocations are never
+   parked idle — release with `exit`; before submitting,
+   `squeue --me` must show zero stale rows. `SLURM_JOB_GPUS` is unreliable on this
+   cluster: `CUDA_VISIBLE_DEVICES` / `torch.cuda.get_device_name()` are the source
+   of GPU truth (the drift guard reads exactly those).
+9. **Adoption rule going forward**: every future sbatch/srun/command block emitted
+   in this project MUST use exactly the §5.0 names and §5.8 scheduling constants;
+   if a handoff contains a stale path/name (`~/pymax`, missing `-p u22`,
+   `/share1/NAS/...`, rsync-copy-repo …), treat it as a bug and self-correct
+   BEFORE presenting.
 
 ## 6. Run manifest contract
 
@@ -156,8 +191,11 @@ kept for every grid run, and every subset carries characterization stats.
 
 ## 9. How to run things
 
-Laptop: pymax venv (`source ~/bin/pymax/bin/activate`). Ada: venv in $HOME built per §5.5.
-All commands run from the repo root so flat root modules import cleanly:
+Laptop: pymax venv (`source ~/bin/pymax/bin/activate` — laptop-only).
+Ada: `source ~/envs/spell/bin/activate`, inside the working repo `~/spell/repo`
+(synced ONLY via git per §5.7 — laptop pushes to `~/spell/repo.git`, Ada pulls).
+All commands run from the repo root so flat root modules import cleanly; every
+scheduler invocation carries §5.8's frozen flags.
 
 ```bash
 python scripts/audit_data.py                 # rebuild data_index.parquet + audit report
@@ -175,3 +213,15 @@ bash scripts/debug.sh                        # single-GPU debug launcher (tests 
 Revision history: `universe-v2` re-froze the internal split over the selectable universe;
 `ada-storage-rev1` superseded NAS write-through with relay archiving + HOME gates +
 hardware drift guard. Earlier wording remains in git history.
+
+## 10. Known issues & permanent policies
+
+1. **CTC backward has no deterministic CUDA kernel** → strict
+   `torch.use_deterministic_algorithms(True)` aborts on GPU. PERMANENT policy:
+   training uses Lightning `Trainer(deterministic="warn_only")`. Seeding, data
+   order and init remain fully pinned by `train_seed=20260826` (§3.11) — only
+   bit-exact CUDA reproducibility is waived (impossible for this op class).
+2. **gnode066**: CUDA-init failure documented on that node. Excluded from every
+   job via `--exclude=gnode066`. The exclusion list grows ONLY through
+   `KNOWN_BAD_NODES.md` plus a manual PROTOCOL.md note here — never ad-hoc
+   command-line exclusions without the bookkeeping entry.

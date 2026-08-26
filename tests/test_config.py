@@ -61,7 +61,7 @@ def _paths_dict(tmp_path):
         "splits_dir": str(tmp_path / "subsets/splits"),
         "runs_dir": str(tmp_path / "runs"),
         "archive_mode": "relay",
-        "archive_root": "/share1/NAS/spell-rq2",
+        "archive_root": "/share1/$USER/spell/runs",   # FROZEN canonical (§5.0)
         "home_warn_gb": 20, "home_abort_gb": 23, "inode_warn_k": 240,
     }
 
@@ -87,3 +87,25 @@ def test_paths_env_overrides(tmp_path, monkeypatch):
     assert cfg.dataset_root == (tmp_path / "ada_data").resolve()
     assert cfg.archive_root == Path("/share7/somewhere")
     assert cfg.archive_mode == "relay"
+
+
+def test_paths_archive_user_expansion(tmp_path, monkeypatch):
+    """§5.0: the frozen canonical archive carries $USER — resolved at load time."""
+    monkeypatch.delenv("SPELL_ARCHIVE_ROOT", raising=False)
+    d = _paths_dict(tmp_path)
+    assert str(d["archive_root"]).startswith("/share1/$USER/")
+    cfg = config.PathsConfig.from_dict(d)
+    import os as _os
+    assert cfg.archive_root == Path(f"/share1/{_os.environ['USER']}/spell/runs")
+
+
+def test_paths_yaml_carries_frozen_constants():
+    """The shipped yaml itself must state the §5.0 canonical archive verbatim."""
+    from config import PROJECT_ROOT, load_paths
+
+    raw = (PROJECT_ROOT / "configs" / "paths.yaml").read_text(encoding="utf-8")
+    assert "/share1/$USER/spell/runs" in raw
+    p = load_paths()
+    assert p.archive_root.name == "runs"
+    assert p.archive_root.parent.name == "spell"
+    assert str(p.archive_root).startswith("/share1/")
