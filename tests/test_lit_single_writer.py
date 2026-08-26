@@ -10,8 +10,10 @@ phantom final epoch leaked through the on_train_end leftover flush.
 
 Contract enforced here:
   * step hooks APPEND only;
-  * module ``on_validation_epoch_end`` is READ-ONLY (logs metrics, mutates nothing);
-  * ``drain_epoch`` is the SOLE consumer;
+  * module ``on_validation_epoch_end`` touches NO row buffer (parquet feed) —
+    it consumes ONLY its private ``_vallog_*`` aggregate scalars (live W&B
+    path, restored 2026-08-27 after the empty-post-drain silent-log bug);
+  * ``drain_epoch`` is the SOLE consumer of the row buffers;
   * sanity handling resets via ``reset_val_buffers``.
 """
 
@@ -54,17 +56,28 @@ def _batch(vocab):
 
 
 def test_module_epoch_end_hook_is_read_only():
+    """self.log is INSTANCE-OVERRIDDEN here (detached Module.log raises without
+    a Trainer, lightning ≥2.x): this records exactly what the hook would emit,
+    which no trainer-attached mock can do more faithfully."""
     lit = LitConformerCTC(_tiny_cfg(), use_augment=False)
+    emitted: list[tuple[str, float]] = []
+    lit.log = lambda name, value, **kw: emitted.append((name, float(value)))
     batch = _batch(lit.vocab)
     for _ in range(2):                                  # two val batches accumulate
         lit.validation_step(batch, 0)
 
     before_rows = len(lit._val_rows)
     drops_before = lit._val_drops
+    assert lit._vallog_rows == 4                        # aggregate scalars fed live
     lit.on_validation_epoch_end()
 
-    assert len(lit._val_rows) == before_rows == 4       # nothing consumed or rebuilt
+    # live W&B series emitted under their exact final names
+    assert {n for n, _ in emitted} == {"val/wer", "val/cer", "val/loss"}
+    assert all(v >= 0.0 for _, v in emitted)
+
+    assert len(lit._val_rows) == before_rows == 4       # parquet feed untouched
     assert lit._val_drops == drops_before
+    assert lit._vallog_rows == 0                        # ...but log scalars consumed
 
     # ...and the same buffers then feed exactly ONE full record through drain:
     payload = lit.drain_epoch()
@@ -88,6 +101,9 @@ def test_drain_then_callback_order_yields_exactly_one_record_per_event(tmp_path)
     import pandas as pd
 
     lit = LitConformerCTC(_tiny_cfg(), use_augment=False)
+    live_series: list[str] = []                       # metric NAMES logged live
+    lit.log = lambda name, value, **kw: (
+        live_series.append(name) if name.startswith("val/") else None)
     batch = _batch(lit.vocab)
     cb = __import__("ckpt_bundle").BundleCallback(
         tmp_path / "run", ckpt_every_epochs=100)
@@ -113,6 +129,11 @@ def test_drain_then_callback_order_yields_exactly_one_record_per_event(tmp_path)
     assert list(df.columns) == METRICS_COLUMNS
     val_wer = df[(df.split == "val") & (df.metric == "wer") & df.utterance_id.isna()]
     assert sorted(val_wer.epoch.tolist()) == [1, 2]       # no sanity bleed, no e3
+    # live path fires too, ordering-immune (callback's row-drain ran first each
+    # time; the scalar aggregates are module-owned): every epoch-end event emits
+    # exactly ONE point of each val series (wer/cer/loss) — 3 names × 2 events.
+    assert sorted(live_series) == sorted(
+        ["val/wer", "val/cer", "val/loss"] * 2)
 
 
 def test_reset_val_buffers_discards_sanity_rows():

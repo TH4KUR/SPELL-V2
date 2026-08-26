@@ -222,6 +222,10 @@ start/end timestamps.
 - Phase 1+ follow PLAN.md's phase order with the pilot gates defined there. Track B
   pilot unlock gate: val WER decreasing by epoch ~5; if still falling steeply at the
   provisional epoch budget, EXTEND epochs before freezing hyperparameters (rule 15).
+  **Gate signal policy**: the PRIMARY signal is the LIVE `val/{wer,cer,loss}` series
+  emitted by the module to its logger each epoch; `scripts/evaluate_track_b.py`
+  post-hoc decoding remains the fallback cross-check and the source of official
+  final numbers (policy set 2026-08-27 after fixing dead live-val logging).
 
 ## 8. Deferred-but-revivable research questions
 
@@ -310,3 +314,13 @@ hardware drift guard. Earlier wording remains in git history.
    fallback. (Birthed 2026-08-27 when the first template-based resubmit ran
    without the env var and aborted cleanly at the new preflight — the gate
    working as designed; pinned by tests incl. template grep-pins.)
+8. **LIVE VAL LOGGING SILENT-MISS (2026-08-27)**: the sole-consumer refactor that
+   fixed the epoch-shift bug left the lit module's post-drain snapshot permanently
+   EMPTY (callback hook drains rows before the module hook) — so every
+   `val/*` W&B series was silently dead while metrics.parquet stayed complete;
+   training itself unaffected. Fix = OWNERSHIP SPLIT: per-utterance rows remain
+   callback-drained; module-owned scalar aggregates are consumed only by the
+   module's own (later-firing) hook, which is the ONLY sanctioned W&B emitter.
+   Any future logging path must prove itself against the spy-logger fit test
+   (`tests/test_val_wandb_series.py`: exactly-once emission, sanity suppressed)
+   — a stub-mocked Trainer cannot catch logger-boundary regressions.
