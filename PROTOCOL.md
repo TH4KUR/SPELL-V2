@@ -130,6 +130,7 @@ python scripts/build_splits.py               # rebuild frozen split files (byte-
 python scripts/check_storage.py [--strict]   # $HOME quota gate (warn 20G / abort 23G)
 python scripts/stage_to_ada.py               # PHASE 0b: stage dataset + sha256 manifest
 python scripts/stage_to_ada.py --verify      # re-hash staged tree vs manifest
+bash scripts/push_data_to_ada.sh [-n]        # push staged dataset to Ada (preflight/transfer/postflight)
 bash scripts/drain_runs.sh -n                # preview relay-archive drain
 python scripts/spot_check.py                 # decode 10 utts -> outputs/spotcheck/ (ear check)
 pytest -q                                    # unit tests incl. crop alignment proof
