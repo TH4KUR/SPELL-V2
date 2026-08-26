@@ -109,7 +109,7 @@ laptop filesystem.
 | Role | Frozen constant |
 |---|---|
 | Ada working repo | `~/spell/repo` |
-| Ada bare git remote | `~/spell/repo.git` |
+| Ada bare git remote | `~/spell/repo.git` (laptop reaches it via its `ada` remote — see §5.7) |
 | Ada python env | `~/envs/spell` (torch 2.6.0+cu124) |
 | Data root on Ada | `$HOME/spell/data` (staged Phase-0b tree; verified 99,909 files) |
 | Canonical archive | `/share1/$USER/spell/runs/` |
@@ -148,10 +148,15 @@ laptop filesystem.
    Never build configs or workflows around an unverified partition (ihub was rejected
    this way; u22-cpu-style surprises cost a revision).
 7. **Git transport (single rule)**: the repo moves between laptop and Ada ONLY via
-   git — laptop pushes to the Ada bare remote (`~/spell/repo.git`); jobs/consoles
-   pull inside `~/spell/repo`. `rsync --delete` (or any bulk-copy) into a git
-   working tree is FORBIDDEN: it silently clobbers divergence between the two
-   checkouts. Runbooks/handoffs must contain NO rsync-based copy-repo steps.
+   git. `rsync --delete` (or any bulk-copy) into a git working tree is FORBIDDEN:
+   it silently clobbers divergence between the two checkouts.
+   **ACHIEVED STATE (since Phase 0b)**: the bare remote, the laptop's `ada`
+   remote, and the canonical clone `~/spell/repo` all exist. The working flow is:
+   laptop commit → `git push ada main` → on Ada, `cd ~/spell/repo && git pull`.
+   Handoffs therefore NEVER re-specify bootstrap steps (`git init --bare`,
+   `git clone`, `git remote add`) — they assume this state and contain only
+   INCREMENTAL commands. Remote examples in handoffs use full SSH URLs or the
+   `ada`/`ada:` alias form, never local paths.
 8. **Scheduling constants for every sbatch/srun/command template** (no drift):
    `-p u22 -A research --qos=medium --constraint=2080ti --exclude=gnode066`;
    CPU-only jobs additionally `--gres=gpu:0`. Interactive GPU allocations are never
@@ -162,8 +167,8 @@ laptop filesystem.
 9. **Adoption rule going forward**: every future sbatch/srun/command block emitted
    in this project MUST use exactly the §5.0 names and §5.8 scheduling constants;
    if a handoff contains a stale path/name (`~/pymax`, missing `-p u22`,
-   `/share1/NAS/...`, rsync-copy-repo …), treat it as a bug and self-correct
-   BEFORE presenting.
+   `/share1/NAS/...`), a re-emitted bootstrap step, or a local-path git remote,
+   treat it as a bug and self-correct BEFORE presenting (§5.7 governs the flow).
 
 ## 6. Run manifest contract
 
@@ -193,7 +198,8 @@ kept for every grid run, and every subset carries characterization stats.
 
 Laptop: pymax venv (`source ~/bin/pymax/bin/activate` — laptop-only).
 Ada: `source ~/envs/spell/bin/activate`, inside the working repo `~/spell/repo`
-(synced ONLY via git per §5.7 — laptop pushes to `~/spell/repo.git`, Ada pulls).
+(synced ONLY via git per §5.7: the bootstrap is DONE — laptop commits and
+pushes to its `ada` remote, Ada runs `cd ~/spell/repo && git pull`).
 All commands run from the repo root so flat root modules import cleanly; every
 scheduler invocation carries §5.8's frozen flags.
 

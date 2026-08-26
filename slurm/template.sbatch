@@ -23,8 +23,9 @@
 #     ~/spell/runs with a COMPLETED marker; scripts/drain_runs.sh moves them to
 #     /share1/$USER/spell/runs from a mounted node (§5.0 canonical archive).
 #   * This job ALWAYS runs from ~/spell/repo, which is synced ONLY via git
-#     (§5.7): laptop pushes to ~/spell/repo.git, this checkout pulls. rsync or
-#     any bulk copy into it is FORBIDDEN (clobbers divergence).
+#     (§5.7 — bootstrap DONE since Phase 0b): laptop commits -> pushes to its
+#     `ada` remote; this checkout pulls. rsync or any bulk copy into it is
+#     FORBIDDEN (clobbers divergence).
 #   * SLURM_JOB_GPUS is unreliable here: CUDA_VISIBLE_DEVICES /
 #     torch.cuda.get_device_name() are the source of truth (assert_gpu reads them).
 #
