@@ -21,6 +21,11 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
+# Protocol revision string embedded in every run_manifest.json — bump whenever
+# PROTOCOL.md gains binding rules. History: universe-v2, ada-storage-rev1,
+# contamination-guard (§3.13–16: halo re-masking, GroupNorm, absolute HPs, dev GPU).
+PROTOCOL_REVISION = "universe-v2+ada-storage-rev1+contamination-guard"
+
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
     """Load a YAML file into a plain dict."""
@@ -143,3 +148,58 @@ def config_hash(cfg: Any) -> str:
         cfg = dataclasses.asdict(cfg)
     canonical = json.dumps(cfg, sort_keys=True, default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+# ------------------------- YAML overlay loading -------------------------
+# Track-B pilot configs inherit the pinned track_b.yaml via a top-level ``base:``
+# key instead of duplicating YAML (Decision, Phase-1 plan): small overlays, one
+# source of truth for frozen constants.
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursive merge; ``override`` wins leaf-for-leaf. Lists/scalars replace wholesale."""
+    out = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def load_config(
+    path: str | Path,
+    configs_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Load a YAML config, resolving an optional ``base: <file>`` inheritance chain.
+
+    Relative ``base:`` values resolve against ``configs_dir`` (default
+    ``<repo>/configs``). Cycles raise. The returned dict is freshly allocated —
+    callers may mutate freely (e.g. seed injection) without touching disk state.
+    """
+    configs_dir = Path(configs_dir) if configs_dir else PROJECT_ROOT / "configs"
+    seen: set[Path] = set()
+
+    def _load(p: Path) -> dict[str, Any]:
+        rp = p.resolve()
+        if rp in seen:
+            raise ValueError(f"config 'base:' cycle at {rp}")
+        seen.add(rp)
+        raw = load_yaml(rp)
+        if not isinstance(raw, dict):
+            raise ValueError(f"config {rp} must be a mapping")
+        base_ref = raw.pop("base", None)
+        merged: dict[str, Any] = {}
+        if base_ref is not None:
+            bp = Path(base_ref)
+            if not bp.is_absolute():
+                bp = configs_dir / bp
+            merged = _load(bp)
+        return deep_merge(merged, raw)
+
+    given = Path(path)
+    if not given.is_absolute():
+        # repo-root-relative first (the documented invocation cwd), CWD fallback
+        cand = (PROJECT_ROOT / given)
+        given = cand if cand.exists() else given
+    return _load(given)

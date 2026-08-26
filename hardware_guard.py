@@ -11,11 +11,17 @@ Driver range 570–580 across nodes is fine for cu124 wheels — logged, not gat
 
 from __future__ import annotations
 
+import os
 import socket
+import sys
 
 # Locked formal-run GPU. Permanent constraint: the ihub/3080 Ti partition is
 # inaccessible (research account rejected) — do not add alternates here.
 LOCKED_GPU_SUBSTRING = "RTX 2080 Ti"
+
+# Dev bypass (PROTOCOL §3.16): laptop bring-up only — pytest, overfit_one_batch,
+# small smoke runs. Formal runs must NEVER set it.
+DEV_GPU_ENV = "SPELL_DEV_GPU"
 
 
 def gpu_info() -> dict:
@@ -66,3 +72,23 @@ def assert_gpu(expected_substring: str = LOCKED_GPU_SUBSTRING) -> dict:
             "Refusing to train/evaluate — resubmit onto a genuine RTX 2080 Ti node."
         )
     return info
+
+
+def enforce_gpu_policy(expected_substring: str = LOCKED_GPU_SUBSTRING) -> dict:
+    """Entry-point gate (PROTOCOL §3.16): drift-guard abort by default; if
+    ``SPELL_DEV_GPU=1`` is set, print a LOUD dev banner and proceed on whatever GPU
+    is present (laptop bring-up only). Requires an actual CUDA device either way."""
+    if str(os.environ.get(DEV_GPU_ENV, "")).strip() not in ("", "0"):
+        info = gpu_info()
+        banner = (
+            "\n" + "=" * 74 +
+            f"\n== DEV-GPU BYPASS ACTIVE ({DEV_GPU_ENV}=1) on {socket.gethostname()!r}"
+            f"\n== device  : {info.get('gpu_name')!r} (NOT the locked 2080 Ti pool)"
+            "\n== results from this run are NOT hardware-comparable with Ada runs"
+            "\n" + "=" * 74
+        )
+        print(banner, file=sys.stderr, flush=True)
+        if not info.get("cuda_available"):
+            raise RuntimeError(f"{DEV_GPU_ENV}=1 set but no CUDA device visible.")
+        return info
+    return assert_gpu(expected_substring)

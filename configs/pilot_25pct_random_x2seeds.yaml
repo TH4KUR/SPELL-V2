@@ -1,0 +1,12 @@
+# Pilot B — 25% random floor × subset seeds {101,102} (Track B sensitivity pilot).
+# Compares against Pilot A under the SAME epochs/hyperparameters (equal-epochs,
+# PROTOCOL §3.1): gate is ΔWER(floor→ceiling) vs seed scatter before any selector work.
+#
+# Launch contract: manifests arrive via --subset-manifest with matching --seed values;
+# this yaml never duplicates subset identity (PROTOCOL §3.11):
+#   --subset-manifest subsets/random_25pct_seed101.txt --seed 101
+#   --subset-manifest subsets/random_25pct_seed102.txt --seed 102
+base: track_b.yaml
+
+training:
+  n_epochs: 20                     # PROVISIONAL — identical to pilot_100pct by design

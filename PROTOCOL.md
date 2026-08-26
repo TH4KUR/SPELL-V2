@@ -63,6 +63,29 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
 12. **CTC input-length rule**: utterances whose token length is shorter than their
     normalized-text id length cannot produce valid CTC targets — they are dropped from
     training/validation batches and the drop count is logged loudly in metrics.
+13. **Pad-containment mechanism (Track B)**: pad sentinel frames are re-zeroed after
+    EVERY sublayer inside a Conformer block. This bounds cross-frame contamination to
+    a halo of ≤ `conv_kernel // 2` frames around each true boundary per block (the
+    depthwise conv is the only sublayer that mixes neighbouring positions; attention
+    keys are column-masked and position-wise FFNs cannot spread values). Real frames
+    within that cumulative halo legitimately see zeros at their edge — identical
+    behaviour across all runs, hence ranking-valid. The no-leakage unit test asserts
+    nothing beyond this bound.
+14. **Normalizer choice (Track B)**: the conv module uses `GroupNorm(1, C)`, NOT
+    BatchNorm1d. BN running stats depend on the batch length distribution, which
+    differs structurally between 100% and 25%-budget cells and would confound the
+    ranking comparison; GroupNorm has no running state, so eval-time statistics are
+    identical across cells.
+15. **Hyperparameters are ABSOLUTE**: every optimizer/schedule constant (lr peak,
+    warmup steps, grad clip, epochs) is a fixed number applied identically to every
+    run — NEVER scaled to subset size. Equal-epochs is a special case of this rule;
+    if the 100% pilot's val WER is still falling steeply at epoch 20, epochs are
+    EXTENDED before freezing — not compensated elsewhere.
+16. **Dev-GPU bypass**: laptop bring-up (`pytest`, `overfit_one_batch`, small smoke
+    runs on the RTX 4060) is permitted via env `SPELL_DEV_GPU=1`, which replaces the
+    drift-guard abort with a loud banner. Formal runs must never set it; formal
+    verification = one-time CPU pytest under the pinned Ada env (u22, --gres=gpu:0)
+    before pilot submission, then both pilots on 2080 Ti nodes only.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
@@ -119,7 +142,11 @@ start/end timestamps.
 - **Phase 0b (BLOCKING)**: stage the dataset to Ada (`$HOME/spell/data`) via
   `scripts/stage_to_ada.py`, sha256-manifested, then `--verify` clean. No Phase-1
   training code runs before this gate passes.
-- Phase 1+ follow PLAN.md's phase order with the pilot gates defined there.
+  **Status: PASSED 2026-08-26** — transfer complete, on-Ada verify returned
+  `99909 expected | missing=0 extra=0 hash_mismatch=0`.
+- Phase 1+ follow PLAN.md's phase order with the pilot gates defined there. Track B
+  pilot unlock gate: val WER decreasing by epoch ~5; if still falling steeply at the
+  provisional epoch budget, EXTEND epochs before freezing hyperparameters (rule 15).
 
 ## 8. Deferred-but-revivable research questions
 

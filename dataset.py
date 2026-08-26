@@ -8,6 +8,7 @@ MUST be out of range and every consumer must mask via the returned lengths/mask.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,6 +66,68 @@ def load_records(index_path: str | Path, split: str | None = None) -> list[Utter
     if split is not None:
         df = df[df["split"] == split]
     return [UtteranceRecord.from_row(row) for _, row in df.iterrows()]
+
+
+def load_id_list(path: str | Path) -> set[str]:
+    """Read an ID-list file (subset manifests, frozen splits): one ID per line,
+    blank lines and ``#`` comments ignored."""
+    ids: set[str] = set()
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                ids.add(line)
+    return ids
+
+
+def filter_records(
+    records: list[UtteranceRecord], ids: set[str], *, strict: bool = True
+) -> list[UtteranceRecord]:
+    """Keep records whose utterance_id is in ``ids``, preserving index order.
+
+    strict=True (default) raises when any requested ID has no record — subset
+    manifests must never silently shrink (selection hygiene).
+    """
+    known = {r.utterance_id for r in records}
+    missing = sorted(ids - known)
+    if missing and strict:
+        preview = ", ".join(missing[:5]) + (" ..." if len(missing) > 5 else "")
+        raise ValueError(f"{len(missing)} requested IDs absent from data_index: {preview}")
+    wanted = ids if not strict else ids & known
+    return [r for r in records if r.utterance_id in wanted]
+
+
+def rebase_records(
+    records: list[UtteranceRecord], new_root: str | Path | None = None
+) -> list[UtteranceRecord]:
+    """Resolve record file paths for the current data location.
+
+    ``data_index.parquet`` stores repo-root-relative paths (``datasets/LRS3/<split>/…``).
+    Repo-local runs use them as-is (``new_root=None``). Runs against a relocated
+    staged tree ($SPELL_DATA_ROOT on Ada) strip that two-component prefix and join
+    ``new_root`` — the staged layout mirrors it exactly under the data root.
+    Audio extension swap (mp4→FLAC) is a Phase-2 concern; paths here stay tokens/txt.
+    """
+    if new_root is None:
+        return records
+    root = Path(new_root)
+
+    def _retarget(path_str: str | None) -> str | None:
+        if path_str is None:
+            return None
+        parts = Path(path_str).parts
+        parts = parts[2:] if len(parts) > 2 and parts[:2] == ("datasets", "LRS3") else parts
+        return str(root.joinpath(*parts))
+
+    return [
+        dataclasses.replace(
+            r,
+            tokens_path=_retarget(r.tokens_path),
+            txt_path=_retarget(r.txt_path),
+            audio_path=_retarget(r.audio_path),
+        )
+        for r in records
+    ]
 
 
 class TokenDataset(Dataset):

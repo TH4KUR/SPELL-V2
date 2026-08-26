@@ -1,0 +1,13 @@
+# DEV smoke-run overlay (laptop bring-up ONLY, PROTOCOL §3.16).
+# Not used by any formal Ada run: differs from track_b.yaml exclusively by
+# flipping W&B offline (the sanctioned per-config fallback) so bring-up runs
+# don't publish throwaway telemetry. Usage:
+#   SPELL_DEV_GPU=1 python scripts/train_track_b.py \
+#       --config configs/dev_smoke.yaml --subset-manifest subsets/splits/train_ids.txt \
+#       --seed 0 --output-dir runs/track_b/smoke_<n> \
+#       --dev-max-train-utts 500 --dev-max-val-utts 120 --dev-max-epochs 2
+base: track_b.yaml
+
+logging:
+  wandb:
+    mode: offline

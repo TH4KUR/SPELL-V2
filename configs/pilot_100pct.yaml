@@ -1,0 +1,14 @@
+# Pilot A — 100% ceiling (Track B).
+# Purpose: sanity-check WER convergence on the full frozen TRAIN split, then FREEZE
+# hyperparameters for every subset run (PROTOCOL §3.2/§3.15 — constants below stay
+# absolute; if val WER still falls steeply at the provisional epoch budget, EXTEND
+# epochs rather than rescale anything).
+#
+# Launch contract: manifest arrives via --subset-manifest; for the ceiling that file is
+#   subsets/splits/train_ids.txt        (29,064 utts; internal val NEVER trained on)
+# subset identity:
+#   subsets/splits/train_ids.txt        (ceiling has no subset seed)
+base: track_b.yaml
+
+training:
+  n_epochs: 20                     # PROVISIONAL pilot budget pending freeze gate

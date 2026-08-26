@@ -7,12 +7,14 @@ model:
   input_stream: 0                 # RVQ₁ = tensor dim-0 index 0 (semantic layer)
   d_model: 256
   n_conformer_layers: 4
-  # PROVISIONAL pin (d_model=256, 4 blocks, ~2–3M params) — written rationale:
+  # PROVISIONAL pin (d_model=256, 4 macaron-FFN blocks) — written rationale:
   # (a) SUBSET SENSITIVITY: at 25% budgets (~7.7k utts) a small model keeps
   #     train/val gaps informative; an oversized net would memorize every subset
-  #     and compress selector differences into noise. (b) RUNTIME: ~2–3M params
-  #     trains a full grid cell (~38 runs × both tracks) inside the Ada 2080 Ti
-  #     allocation without becoming the bottleneck of the equal-epochs protocol.
+  #     and compress selector differences into noise. (b) RUNTIME: measured at
+  #     6.6M params with rel-pos attention + ff_mult=4 below (the earlier "~2–3M"
+  #     estimate was optimistic; FFNs dominate). What matters for RQ2 is that the
+  #     count is IDENTICAL across every run; it trains grid cells well within the
+  #     Ada 2080 Ti allocation. Freeze AFTER the 100% pilot per §3.2.
   n_conformer_heads: 4
   conformer_ff_mult: 4            # macaron FFN hidden = 4×d_model (half-steps)
   conv_kernel_size: 15
