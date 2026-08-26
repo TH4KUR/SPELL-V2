@@ -57,6 +57,8 @@ python -m pip install --no-cache-dir -r "$LOCK"
 # ---- post-build verification: the env proves it matches the lock -------------
 python - <<'PY'
 import importlib, re, sys
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as meta_version
 from pathlib import Path
 
 lock = {}
@@ -67,19 +69,32 @@ for line in Path("requirements.lock").read_text().splitlines():
         if len(parts) == 2:
             lock[parts[0].lower()] = parts[1]
 
+def installed_version(mod, dist):
+    # pip's own record is AUTHORITATIVE; module __version__ is only a fallback —
+    # some packages (e.g. jiwer 4.x) don't publish it at all.
+    try:
+        return meta_version(dist)
+    except PackageNotFoundError:
+        m = importlib.import_module(mod)
+        return getattr(m, "__version__", "?")
+
 def check(mod, dist):
-    m = importlib.import_module(mod)
-    got = getattr(m, "__version__", "?")
+    got = installed_version(mod, dist)
     want = lock[dist]
-    ok = got.split("+")[0] == want.split("+")[0]
-    print(f"{'OK ' if ok else 'BAD'} {mod}={got} (lock wants {want})")
+    ok = got != "?" and got.split("+")[0] == want.split("+")[0]
+    print(f"{'OK ' if ok else 'BAD'} {dist}={got} (lock wants {want})")
     if not ok:
         sys.exit(3)
 
-check("torch", "torch")
-check("lightning", "lightning")
-check("pytorch_lightning", "pytorch-lightning")
-check("jiwer", "jiwer")
+for mod, dist in [                       # suite-critical: pytest+lightning mandated §5.5
+    ("numpy", "numpy"), ("pandas", "pandas"), ("pyarrow", "pyarrow"),
+    ("yaml", "pyyaml"), ("soundfile", "soundfile"),
+    ("jiwer", "jiwer"), ("wandb", "wandb"),
+    ("pytest", "pytest"),
+    ("lightning", "lightning"), ("pytorch_lightning", "pytorch-lightning"),
+    ("torch", "torch"),
+]:
+    check(mod, dist)
 
 import torch
 if torch.cuda.is_available():
