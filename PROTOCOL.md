@@ -144,6 +144,17 @@ laptop filesystem.
    `python` (never `python3`).
    **Environment status: BUILT AND PINNED — torch 2.6.0+cu124, GLIBC gate passed
    (Ada env commit 8c4c340). Never create a second venv under any circumstances.**
+   **Lockfile discipline (§5.5)**: `requirements.lock` at the repo root IS the
+   description of `~/envs/spell` — **a venv not described by the lockfile is
+   considered BROKEN.** ANY interactive/manual pip install into the env must be
+   IMMEDIATELY followed by regenerating the lock (`pip freeze > requirements.lock`),
+   committing it to the repo. Better still: when a test run reveals a missing
+   dependency, that dependency belongs in `scripts/setup_env.sbatch` /
+   requirements.lock so the env stays reproducible from scratch — hand-installs
+   are the exception, not the workflow. `scripts/setup_env.sbatch` builds fresh or
+   reconciles the existing env EXACTLY against the lock (this is also how newly
+   locked deps — pytest, lightning — reach the live env); its post-build verifier
+   imports the lock-critical packages and exits non-zero on any mismatch.
 6. **Partition adoption rule**: before adopting any partition, verify access —
    `scontrol show partition <name>` and confirm `AllowAccounts` includes our account.
    Never build configs or workflows around an unverified partition (ihub was rejected
@@ -209,6 +220,7 @@ All commands run from the repo root so flat root modules import cleanly; every
 scheduler invocation carries §5.8's frozen flags.
 
 ```bash
+sbatch scripts/setup_env.sbatch              # build/reconcile ~/envs/spell vs requirements.lock
 python scripts/audit_data.py                 # rebuild data_index.parquet + audit report
 python scripts/build_splits.py               # rebuild frozen split files (byte-stable)
 python scripts/check_storage.py [--strict]   # $HOME quota gate (warn 20G / abort 23G)

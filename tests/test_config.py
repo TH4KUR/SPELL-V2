@@ -109,3 +109,50 @@ def test_paths_yaml_carries_frozen_constants():
     assert p.archive_root.name == "runs"
     assert p.archive_root.parent.name == "spell"
     assert str(p.archive_root).startswith("/share1/")
+
+
+def test_frozen_artifacts_resolve_identically_under_any_cwd(tmp_path, monkeypatch):
+    """Suite-critical frozen inputs must resolve to the SAME existing files under
+    ANY process CWD. Scripts get launched from everywhere (SLURM cd's to
+    SLURM_SUBMIT_DIR, humans wander), so every resolver here must anchor to the
+    repo/paths layer — never to ``os.getcwd()``."""
+    import os
+
+    def snapshot() -> dict:
+        p = config.load_paths()
+        artifacts = {
+            # paths-layer resolved
+            "data_index.parquet": Path(p.index_path),
+            # repo-root-anchored frozen inputs consumed by tests + scripts
+            "train_ids.txt": config.PROJECT_ROOT / "subsets/splits/train_ids.txt",
+            "val_ids.txt": config.PROJECT_ROOT / "subsets/splits/val_ids.txt",
+            "protocol.yaml": config.PROJECT_ROOT / "configs/protocol.yaml",
+            "pilot_100pct.yaml": config.PROJECT_ROOT / "configs/pilot_100pct.yaml",
+            "run_plan_pilots.tsv": config.PROJECT_ROOT / "slurm/run_plan_pilots.tsv",
+            "requirements.lock": config.PROJECT_ROOT / "requirements.lock",
+        }
+        return {k: v.resolve() for k, v in artifacts.items()}
+
+    must_exist = {
+        "data_index.parquet",                      # committed Phase-0 input
+        "train_ids.txt", "val_ids.txt",
+        "protocol.yaml", "pilot_100pct.yaml",
+        "run_plan_pilots.tsv", "requirements.lock",
+    }
+
+    from_root = snapshot()
+    missing = {k for k in must_exist if not from_root[k].exists()}
+    assert not missing, f"frozen artifacts absent from the checkout: {sorted(missing)}"
+
+    hostile = tmp_path / "definitely-not-the-repo"
+    hostile.mkdir()
+    monkeypatch.chdir(hostile)
+    assert os.getcwd() == str(hostile)             # prove we actually moved
+
+    from_elsewhere = snapshot()                    # same resolvers, foreign CWD
+    assert from_elsewhere == from_root             # identical targets
+
+    # and the overlay loader itself: repo-root-relative path, alien CWD
+    merged = config.load_config("configs/pilot_100pct.yaml")
+    assert merged["training"]["n_epochs"] == 20
+    assert merged["training"]["train_seed"] == 20260826

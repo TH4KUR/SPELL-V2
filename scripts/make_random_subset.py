@@ -64,7 +64,7 @@ def main() -> int:
         print(f"FATAL: budget k={k} exceeds train pool {len(train_ids)}", file=sys.stderr)
         return 2
 
-    index = pd.read_parquet(PROJECT_ROOT / paths_index_name())
+    index = pd.read_parquet(resolve_index())
     durations = index.set_index("utterance_id")["duration_s"]
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -96,10 +96,18 @@ def main() -> int:
     return 0
 
 
-def paths_index_name() -> str:
+def resolve_index() -> Path:
+    """data_index.parquet via the paths layer (paths.yaml / env overrides).
+
+    The configured path is used VERBATIM — never re-anchored to the CWD or the
+    repo root. (An earlier draft did
+    ``Path(load_paths().index_path).relative_to(PROJECT_ROOT)`` and re-joined it,
+    which silently bypassed the same mechanism that locates the token tree and
+    would break for any absolute/env-overridden index location.)
+    """
     from config import load_paths
 
-    return str(Path(load_paths().index_path).relative_to(PROJECT_ROOT))
+    return Path(load_paths().index_path)
 
 
 if __name__ == "__main__":

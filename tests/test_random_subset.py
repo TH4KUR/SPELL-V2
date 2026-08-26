@@ -129,3 +129,22 @@ def test_two_floors_are_distinct_identities():
     expected_inter = COMMITTED_K ** 2 / pool_size
     inter = float(len(a & b))
     assert abs(inter - expected_inter) < 0.15 * expected_inter
+
+
+# ------------------------------------------- index resolution (paths layer) ----
+
+def test_index_resolution_uses_paths_layer_under_any_cwd(tmp_path, monkeypatch):
+    """Regression: characterization must resolve data_index.parquet via the paths
+    layer, never re-anchored to CWD/repo root. An earlier draft called
+    .relative_to(PROJECT_ROOT) on the configured path — bypassing the same
+    mechanism that locates the token tree."""
+    from config import load_paths
+
+    expected = Path(load_paths().index_path).resolve()      # resolved from repo root
+    monkeypatch.chdir(tmp_path)                             # hostile CWD: not the repo
+    got = mrs.resolve_index().resolve()
+    assert got == expected                                  # identical file target ...
+    assert str(got).startswith(str(PROJECT_ROOT))           # ... and repo-anchored
+    import pandas as pd
+
+    assert len(pd.read_parquet(got)) > 0                    # actually readable there
