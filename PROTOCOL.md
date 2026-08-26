@@ -186,6 +186,24 @@ laptop filesystem.
    if a handoff contains a stale path/name (`~/pymax`, missing `-p u22`,
    `/share1/NAS/...`), a re-emitted bootstrap step, or a local-path git remote,
    treat it as a bug and self-correct BEFORE presenting (§5.7 governs the flow).
+10. **Run-plan TSVs — schema FROZEN, generator-sanctioned**: 6 TAB-separated
+    fields `task|track|subset_manifest|seed|config_yaml|keep_local_traj`; the
+    first non-comment row is the literal header; `#`/blank lines are ignored
+    anywhere. **The task id lives IN THE DATA**: readers match column 1 against
+    `SLURM_ARRAY_TASK_ID` via `scripts/plan_reader.awk` — position/offset reads
+    (physical line = array id + N) are FORBIDDEN; they broke silently when a
+    regenerated file's banner length changed (§10, pilot-A incident).
+    `scripts/gen_run_plan.py` is the ONLY sanctioned writer; hand-editing a
+    committed `slurm/*.tsv` is a protocol violation, and its `--check` mode must
+    stay green in the test suite. `template.sbatch` pins NO array range (always
+    passed on the sbatch CLI) and carries flags-only #SBATCH lines.
+11. **No live edits on cluster clones**: tracked files on Ada change ONLY via the
+    §5.7 git flow. Patching remote copies with sed/python `.replace()` is
+    FORBIDDEN — exact-string patches no-op silently when whitespace drifts
+    (observed: the index-free reader patch never landed). Cluster-side change ⇒
+    edit in repo → tests green → push → pull → resubmit. A temporary bypass
+    script requires explicit user authorization AND post-run reconciliation of
+    anything it produced (see §10 pilot-A entry).
 
 ## 6. Run manifest contract
 
@@ -222,6 +240,7 @@ scheduler invocation carries §5.8's frozen flags.
 
 ```bash
 sbatch scripts/setup_env.sbatch              # build/reconcile ~/envs/spell vs requirements.lock
+python scripts/gen_run_plan.py [--check]     # the ONLY sanctioned run-plan TSV writer
 python scripts/audit_data.py                 # rebuild data_index.parquet + audit report
 python scripts/build_splits.py               # rebuild frozen split files (byte-stable)
 python scripts/check_storage.py [--strict]   # $HOME quota gate (warn 20G / abort 23G)
@@ -249,3 +268,15 @@ hardware drift guard. Earlier wording remains in git history.
    job via `--exclude=gnode066`. The exclusion list grows ONLY through
    `KNOWN_BAD_NODES.md` plus a manual PROTOCOL.md note here — never ad-hoc
    command-line exclusions without the bookkeeping entry.
+3. **Pilot-A bypass incident (2026-08-27, reconciled)**: a run-plan reader keyed
+   on PHYSICAL LINE (`array_id + 2`) broke the moment a regenerated TSV changed
+   its banner length; jobs launched against non-data lines died instantly. An
+   index-free fix was then attempted as an in-place patch ON ADA only — the
+   exact-string `.replace()` no-opped silently (whitespace drift), so neither
+   version reached git and training went out via an ad-hoc bypass sbatch
+   (/tmp/pilotA.sbatch). Consequences locked in: §5 item 10 (data-keyed schema +
+   sanctioned generator), §5 item 11 (no live edits on cluster clones), full
+   template rewrite + regression suite (`tests/test_run_plan.py`). The running
+   pilot's bundle lacks `--run-manifest-out` provenance — reconcile post-run if
+   it matters downstream (see handoff); Phase-2+ must never need this class of
+   bypass again because the template now reads plans by ID with loud fatals.
