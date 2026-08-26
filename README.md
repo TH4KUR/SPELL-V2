@@ -70,7 +70,7 @@ Formal runs run on Ada; this laptop is the authoring/pilot box.
 
 ```bash
 python scripts/stage_to_ada.py --dest ~/spell/data   # FLAC + tokens + transcripts + sha256 manifest
-bash scripts/push_data_to_ada.sh                     # laptop -> Ada tar stream w/ pre/postflight (-n = dry-run)
+bash scripts/push_data_to_ada.sh                     # laptop -> Ada incremental rsync (resumable; -n = dry-run)
 python scripts/stage_to_ada.py --verify              # on Ada; must be clean before Phase 1
 ```
 
