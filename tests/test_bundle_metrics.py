@@ -162,9 +162,12 @@ def test_write_cycle_metrics_trajectory_and_cap(tmp_path):
 
 def test_checkpoint_stub_records_weights_only_flag(tmp_path):
     """The LESS trajectories must be weights-ONLY while last.ckpt carries full
-    training state — observable through what we ask save_checkpoint to do."""
+    training state — observable through what we ask save_checkpoint to do.
+    (2026-08-27 incident: this used to bless the non-existent kwarg
+    ``save_weights_only``, which a **kwargs stub cannot catch.)"""
     cb = BundleCallback(tmp_path / "r", ckpt_every_epochs=5)
     log: list[tuple[str, bool]] = []
+    seen_kwargs: dict[str, tuple] = {}
 
     class LoggingTrainer(_StubTrainer):
         def save_checkpoint(self, filepath, **kwargs):
@@ -172,16 +175,88 @@ def test_checkpoint_stub_records_weights_only_flag(tmp_path):
             p = str(filepath)
             if p.endswith(".tmp"):
                 p = p[: -len(".tmp")]
-            log.append((Path(p).name, bool(kwargs.get("save_weights_only"))))
+            seen_kwargs[Path(p).name] = tuple(kwargs.keys())
             torch.save({}, str(filepath))
 
     tr = LoggingTrainer(epoch=4)                       # display epoch 5 hits trajectory
     mod = DrainableModule(_empty_payload())
     cb.on_validation_epoch_end(tr, mod)
 
-    names = {n: wo for n, wo in log}
-    assert names["ckpt_epoch0005.ckpt"] is True
-    assert names["last.ckpt"] is False
+    assert "weights_only" in seen_kwargs["ckpt_epoch0005.ckpt"]     # REAL param name
+    assert "save_weights_only" not in seen_kwargs["ckpt_epoch0005.ckpt"]
+    assert seen_kwargs["last.ckpt"] == ()                            # full state: bare call
+
+
+def test_real_trainer_checkpoint_branches(tmp_path):
+    """Integration pin for the 2026-08-27 pilot-A crash: the periodic
+    trajectory branch had NEVER executed end-to-end anywhere before Ada
+    (laptop smoke ran 2 epochs < every-5; unit stubs accepted any kwargs).
+    This drives a REAL lightning.Trainer through BOTH save branches so any
+    API drift fails here, on CPU, before any cluster submission."""
+    class FitModule(DrainableModule):
+        def __init__(self):
+            super().__init__(_empty_payload())
+            self.net = torch.nn.Linear(3, 1)
+
+        def training_step(self, batch, _idx):
+            loss = (self.net(batch[0].float()) ** 2).mean()
+            self.stage_payload({"train": [("t0", float(loss))],
+                                "train_drops": 0, "val": None})
+            return loss
+
+        def validation_step(self, batch, _idx):
+            return None
+
+        def configure_optimizers(self):
+            return torch.optim.SGD(self.parameters(), lr=1e-2)
+
+    from torch.utils.data import DataLoader, TensorDataset
+
+    dl = DataLoader(TensorDataset(torch.randn(8, 3)), batch_size=4)
+
+    class FitModule(DrainableModule):
+        def __init__(self):
+            super().__init__(_empty_payload())
+            self.net = torch.nn.Linear(3, 1)
+
+        def training_step(self, batch, _idx):
+            loss = (self.net(batch[0].float()) ** 2).mean()
+            self.stage_payload({"train": [("t0", float(loss))],
+                                "train_drops": 0, "val": None})
+            return loss
+
+        def validation_step(self, batch, _idx):
+            return None
+
+        def configure_optimizers(self):
+            return torch.optim.SGD(self.parameters(), lr=1e-2)
+
+    run_dir = tmp_path / "fitrun"
+    cb = BundleCallback(run_dir, ckpt_every_epochs=2)
+    trainer = pl.Trainer(
+        max_epochs=3, accelerator="cpu", devices=1,
+        callbacks=[cb], logger=False, enable_checkpointing=False,
+        enable_progress_bar=False, enable_model_summary=False,
+        num_sanity_val_steps=0,
+    )
+    trainer.fit(FitModule(), dl, dl)
+
+    # cadence: periodic ONLY at display epoch 2; rolling everywhere
+    assert (run_dir / "ckpt_epoch0002.ckpt").exists()
+    assert not (run_dir / "ckpt_epoch0001.ckpt").exists()
+    assert not (run_dir / "ckpt_epoch0003.ckpt").exists()
+    assert (run_dir / "last.ckpt").exists()
+    # periodic snapshot is WEIGHTS-ONLY; last.ckpt is the FULL resumable state
+    traj = torch.load(run_dir / "ckpt_epoch0002.ckpt", map_location="cpu",
+                      weights_only=False)
+    last = torch.load(run_dir / "last.ckpt", map_location="cpu",
+                      weights_only=False)
+    assert "state_dict" in traj and "optimizer_states" not in traj
+    assert "optimizer_states" in last
+    # metrics flow + clean-finish marker
+    df = pd.read_parquet(run_dir / "metrics.parquet")
+    assert len(df[(df.split == "train") & (df.metric == "loss")]) >= 3
+    assert (run_dir / "COMPLETED").exists()
 
 
 def test_completed_marker_semantics(tmp_path):

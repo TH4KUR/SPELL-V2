@@ -91,8 +91,13 @@ RUN_DIR="runs/$RUN_ID"
 mkdir -p "$RUN_DIR"
 
 cleanup() {
-    # Relay contract: mark the bundle complete so drain_runs.sh will take it.
-    [[ -d "$RUN_DIR" ]] && touch "$RUN_DIR/COMPLETED"
+    # Relay contract: COMPLETED means "clean finish, drain may take it".
+    # A crashed python (non-zero script exit) must leave the bundle WITHOUT
+    # the marker so drain_runs.sh skips it (§5.2; bundle docstring promise).
+    local rc=$?
+    if [[ $rc -eq 0 && -d "$RUN_DIR" ]]; then
+        touch "$RUN_DIR/COMPLETED"
+    fi
 }
 trap cleanup EXIT
 

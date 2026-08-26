@@ -120,7 +120,7 @@ class BundleCallback(pl.Callback):
 
         if e % self.ckpt_every_epochs == 0:           # LESS trajectory snapshot
             self._save(trainer, self.run_dir / f"ckpt_epoch{e:04d}.ckpt",
-                       save_weights_only=True)
+                       weights_only=True)             # Trainer.save_checkpoint's real name
         self._save(trainer, self.run_dir / "last.ckpt")   # full state, resumable
         self._assert_file_cap()
 
