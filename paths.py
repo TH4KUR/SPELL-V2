@@ -69,6 +69,20 @@ class DataPaths:
                 f"see {LAYOUT_DOC}")
         self.root = Path(root)
         self.layout = layout
+        if layout == "staged" and self.root.name == "LRS3" \
+                and self.root.parent.name == "datasets":
+            # The configured default IS the Phase-0 raw audit source (audit-era
+            # mp4/wav tree). Staged mode refusing it here is what turns "the env
+            # var was forgotten" from a mid-training failure into a startup
+            # FATAL with the remedy attached.
+            raise LayoutError(
+                f"[spell] staged layout given the RAW AUDIT SOURCE root: "
+                f"{self.root}\n"
+                f"That tree holds .mp4/.wav containers under split dirs — never "
+                f"a staged token tree.\n"
+                f"REMEDY: export SPELL_DATA_ROOT=$HOME/spell/data (Ada, §5.0) — "
+                f"slurm/template.sbatch now defaults it; interactive shells must "
+                f"set it before python. See {LAYOUT_DOC}.")
 
     # ------------------------------------------------------------ builders --
     def tokens_relpath(self, video_id: str, stem: str) -> PurePosixPath:
@@ -131,7 +145,9 @@ class DataPaths:
             f"  expected  : {expected_tree}\n"
             f"  declared in: {LAYOUT_DOC}\n"
             f"If you restaged or moved data: regenerate data_index.parquet and run "
-            f"--verify (§10 item 5); do NOT hand-patch paths."
+            f"--verify (§10 item 5); do NOT hand-patch paths.\n"
+            f"If data_root above is not where you staged the data, set "
+            f"SPELL_DATA_ROOT (see {LAYOUT_DOC})."
         )
 
     # ------------------------------------------------------------ preflight --

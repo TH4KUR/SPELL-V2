@@ -83,6 +83,11 @@ def plan_jobs(source: Path, dest: Path, limit: int | None) -> list[dict]:
     """
     import paths as p
 
+    # Twins are bound to DEST (the staged tree this pass BUILDS), not to
+    # paths.current(): staging always emits the canonical staged layout, and
+    # dest may legitimately differ from the ambient runtime root.
+    dp = p.DataPaths(root=dest, layout="staged")
+
     index_path = PROJECT_ROOT / "data_index.parquet"
     if not index_path.exists():
         raise SystemExit(f"missing {index_path} — run scripts/audit_data.py first")
@@ -94,7 +99,7 @@ def plan_jobs(source: Path, dest: Path, limit: int | None) -> list[dict]:
     jobs: list[dict] = []
     for r in df.itertuples():
         src_split_root = source / r.split          # raw tree: <root>/<split>/...
-        tok_rel = p.current().tokens_relpath(r.video_id, r.stem)
+        tok_rel = dp.tokens_relpath(r.video_id, r.stem)
 
         def _src(col: str, rel) -> Path:
             """Migration shim (delete after the next audit regen): the committed
@@ -110,11 +115,11 @@ def plan_jobs(source: Path, dest: Path, limit: int | None) -> list[dict]:
         jobs.append({"src": _src("tokens_path", tok_rel),
                      "rel": tok_rel.as_posix(), "kind": KIND_TOKENS})
         if r.txt_path and not pd.isna(r.txt_path):
-            txt_rel = p.current().transcript_relpath(r.video_id, r.stem)
+            txt_rel = dp.transcript_relpath(r.video_id, r.stem)
             jobs.append({"src": _src("txt_path", txt_rel),
                          "rel": txt_rel.as_posix(), "kind": KIND_TRANSCRIPT})
         jobs.append({"src": Path(r.audio_path),      # provenance: original container
-                     "rel": p.current().flac_relpath(r.video_id, r.stem).as_posix(),
+                     "rel": dp.flac_relpath(r.video_id, r.stem).as_posix(),
                      "kind": KIND_AUDIO})
     return jobs
 

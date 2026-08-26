@@ -11,6 +11,9 @@ and duration is plausible for the text length. This is the human gate on the
 transcript<->audio pairing that every later WER depends on.
 
     python scripts/spot_check.py [--n 10] [--seed 20260825] [--out outputs/spotcheck]
+
+Audio resolves through paths.py (DATA LAYOUT LAW): against the laptop raw tree
+run with SPELL_DATA_LAYOUT=legacy; against a staged tree set SPELL_DATA_ROOT.
 """
 
 from __future__ import annotations

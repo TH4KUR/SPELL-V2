@@ -199,6 +199,47 @@ def test_unknown_layout_value_rejected(tmp_path):
         DataPaths(root=tmp_path, layout="splitdirs")
 
 
+# ------------------------------------ SPELL_DATA_ROOT-omission regression pins
+# (2026-08-27 resubmit: template job launched without SPELL_DATA_ROOT, the
+# paths layer fell back to the raw-audit-source default datasets/LRS3, and the
+# preflight aborted — correctly. These pins make BOTH halves permanent: the
+# refusal is loud and carries the remedy, the template can never omit it.)
+
+def test_staged_mode_refuses_raw_audit_source_root(tmp_path):
+    """Any root shaped …/datasets/LRS3 is DEFINITIONALLY the Phase-0 raw source;
+    staged mode must FATAL at construction with the SPELL_DATA_ROOT remedy."""
+    raw = tmp_path / "repo" / "datasets" / "LRS3"
+    with pytest.raises(LayoutError) as ei:
+        DataPaths(root=raw, layout="staged")
+    msg = str(ei.value)
+    assert "RAW AUDIT SOURCE" in msg
+    assert "SPELL_DATA_ROOT=$HOME/spell/data" in msg
+
+
+def test_legacy_mode_still_accepts_raw_audit_source_root(tmp_path):
+    """The refusal is staged-only — legacy tooling legitimately audits the
+    mp4/wav tree through that very root shape."""
+    dp = DataPaths(root=tmp_path / "datasets" / "LRS3", layout="legacy")
+    assert dp.layout == "legacy"
+
+
+def test_template_defaults_and_gates_the_data_root():
+    """slurm/template.sbatch self-defaults SPELL_DATA_ROOT to the §5.0 constant
+    (override wins), exports it, and existence-gates it before training."""
+    text = (PROJECT_ROOT / "slurm" / "template.sbatch").read_text(encoding="utf-8")
+    assert ': "${SPELL_DATA_ROOT:=$HOME/spell/data}"' in text   # default w/ override
+    assert "export SPELL_DATA_ROOT" in text
+    assert '[[ -d "$SPELL_DATA_ROOT" ]] || fatal' in text       # loud early gate
+    # ...and the run banner echoes it so every log shows which root was used
+    assert 'echo "[spell] data_root=${SPELL_DATA_ROOT}"' in text
+
+
+def test_docs_pin_spelling_of_the_data_root_requirement():
+    text = (PROJECT_ROOT / paths_mod.LAYOUT_DOC).read_text(encoding="utf-8")
+    assert "refuses any root that looks like that raw source" in text
+    assert "SPELL_DATA_ROOT=$HOME/spell/data" in text
+
+
 def test_preflight_empty_record_list_is_loud(tmp_path):
     with pytest.raises(LayoutError, match="empty record list"):
         DataPaths(root=tmp_path, layout="staged").preflight([])

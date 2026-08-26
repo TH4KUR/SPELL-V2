@@ -46,6 +46,8 @@
 # Usage (from ~/spell/repo, after `squeue --me` shows zero stale rows — §5.8):
 #   sbatch --export=ALL,SPELL_RUN_PLAN=$HOME/spell/repo/slurm/run_plan_pilots.tsv \
 #          slurm/template.sbatch        # array selection passed via the CLI
+# SPELL_DATA_ROOT defaults to $HOME/spell/data (§5.0) and is existence-gated
+# below — pass it via --export only for non-canonical staged trees.
 
 set -euo pipefail
 
@@ -60,6 +62,13 @@ mkdir -p logs runs outputs checkpoints
 source "$HOME/envs/spell/bin/activate"   # FROZEN env name (§5.0); torch 2.6.0+cu124
 
 fatal() { echo "FATAL[template]: $*" >&2; exit 2; }
+
+# DATA ROOT (§5.0 canonical): staged data lives ONLY at $HOME/spell/data.
+# Default it here so a forgotten --export can never silently fall back to the
+# configured raw-audit-source default (datasets/LRS3); explicit overrides win.
+: "${SPELL_DATA_ROOT:=$HOME/spell/data}"
+export SPELL_DATA_ROOT
+[[ -d "$SPELL_DATA_ROOT" ]] || fatal "data root missing: ${SPELL_DATA_ROOT} (docs/layout.md; §5.0)"
 
 PLAN="${SPELL_RUN_PLAN:?set SPELL_RUN_PLAN to the run-plan TSV}"
 [[ -f "$PLAN" ]] || fatal "no such plan file: ${PLAN}"
@@ -89,6 +98,7 @@ trap cleanup EXIT
 
 echo "[spell] task=$TASK_ID track=$TRACK manifest=$MANIFEST seed=$SEED cfg=$CFG"
 echo "[spell] run_dir=$RUN_DIR keep_local_traj=$KEEP_LOCAL_TRAJ host=$(hostname)"
+echo "[spell] data_root=${SPELL_DATA_ROOT}"
 
 # --- gates BEFORE any training ---
 python scripts/check_storage.py --strict

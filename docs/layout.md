@@ -54,6 +54,14 @@ is staged; only the index can tell you *which* split it serves.
 
 ## Startup preflight
 
+**The root must be explicit at runtime.** `configs/paths.yaml`'s default
+`dataset_root: datasets/LRS3` points at the Phase-0 RAW audit source (mp4/wav,
+split dirs). Staged mode **refuses any root that looks like that raw source**
+(`…/datasets/LRS3`) with a loud FATAL telling you to set
+`SPELL_DATA_ROOT=$HOME/spell/data`. On Ada, `slurm/template.sbatch` defaults
+and exports the variable itself, so plain submissions cannot hit this;
+interactive shells must set it before invoking python.
+
 Every runtime entrypoint (trainer, evaluator, overfit smoke) prints its resolved root
 and samples random active-manifest IDs through the authority BEFORE epoch 1:
 
