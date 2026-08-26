@@ -70,13 +70,44 @@ fi
 
 # ---------- transfer (INCREMENTAL: safe to interrupt, rerun resumes) ----------
 echo "-- rsync -> $HOST:$REMOTE_BASE/data (~${LOCAL_GB} MB / ~100k small files)..."
-rsync -a --partial --info=progress2 \
-      -e "ssh ${SSH_OPTS[*]}" \
-      "$LOCAL_DIR/" "$HOST:$REMOTE_BASE/data/"
+
+MAX_RETRIES=5
+RETRY_DELAY=10  # seconds; doubles each attempt (10, 20, 40, 80, 160)
+attempt=0
+while true; do
+    set +e  # rsync may fail transiently — don't let set -e kill us
+    rsync -a --partial --info=progress2 \
+          -e "ssh ${SSH_OPTS[*]}" \
+          "$LOCAL_DIR/" "$HOST:$REMOTE_BASE/data/"
+    rc=$?
+    set -e
+
+    if [[ $rc -eq 0 ]]; then
+        break
+    fi
+
+    attempt=$((attempt + 1))
+    # Retryable codes: 255=SSH error, 12=protocol stream, 30=timeout
+    if [[ $rc -ne 255 && $rc -ne 12 && $rc -ne 30 ]]; then
+        echo "FATAL: rsync exited $rc (non-retryable). Fix the issue and rerun." >&2
+        exit $rc
+    fi
+
+    if [[ $attempt -ge $MAX_RETRIES ]]; then
+        echo "FATAL: rsync failed $MAX_RETRIES times (last exit=$rc). Network too unstable." >&2
+        echo "       Rerun this script to resume from where it stopped (--partial is on)." >&2
+        exit $rc
+    fi
+
+    delay=$((RETRY_DELAY * (1 << (attempt - 1))))
+    echo "WARN: rsync exited $rc (attempt $attempt/$MAX_RETRIES). Retrying in ${delay}s..." >&2
+    sleep "$delay"
+done
+
 echo "-- transfer finished."
 
 # ---------- postflight ----------
-REMOTE_INODES=$(ssh "${SSH_OPTS[@]}" "$HOST" "find '$REMOTE_BASE/data' -not -name '.*.??????' | wc -l")
+REMOTE_INODES=$(ssh "${SSH_OPTS[@]}" "$HOST" "find \"$REMOTE_BASE/data\" -not -name '.*.??????' | wc -l")
 if [[ "$REMOTE_INODES" != "$LOCAL_INODES" ]]; then
     echo "WARN: inode mismatch local=$LOCAL_INODES remote=$REMOTE_INODES — rerun this" >&2
     echo "      script (idempotent), then investigate before trusting the tree." >&2
