@@ -41,7 +41,7 @@ echo "   local  src  : $LOCAL_DIR"
     exit 1;
 }
 
-LOCAL_INODES=$(find "$LOCAL_DIR" | wc -l)
+LOCAL_INODES=$(find "$LOCAL_DIR" -not -name '.*.??????' | wc -l)
 LOCAL_GB=$(du -sm "$LOCAL_DIR" | cut -f1)
 echo "   local tree  : $LOCAL_INODES inodes, ${LOCAL_GB} MB"
 
@@ -76,7 +76,7 @@ rsync -a --partial --info=progress2 \
 echo "-- transfer finished."
 
 # ---------- postflight ----------
-REMOTE_INODES=$(ssh "${SSH_OPTS[@]}" "$HOST" "find '$REMOTE_BASE/data' | wc -l")
+REMOTE_INODES=$(ssh "${SSH_OPTS[@]}" "$HOST" "find '$REMOTE_BASE/data' -not -name '.*.??????' | wc -l")
 if [[ "$REMOTE_INODES" != "$LOCAL_INODES" ]]; then
     echo "WARN: inode mismatch local=$LOCAL_INODES remote=$REMOTE_INODES — rerun this" >&2
     echo "      script (idempotent), then investigate before trusting the tree." >&2

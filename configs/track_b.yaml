@@ -1,33 +1,48 @@
-# Track B — Conformer-CTC ASR on the RVQ₁ stream. SKELETON ONLY (implemented Phase 1).
+# Track B — Conformer-CTC ASR on the RVQ₁ stream.
 # All hyperparameters below are PROVISIONAL pending the 100% pilot; they are then
 # frozen for every subset run — no per-subset tuning, ever (PROTOCOL.md rule 2).
 track: asr_ctc
 
 model:
-  # PROVISIONAL
   input_stream: 0                 # RVQ₁ = tensor dim-0 index 0 (semantic layer)
   d_model: 256
-  n_conformer_layers: 4           # allowed range 4–6; pick once from pilot
+  n_conformer_layers: 4
+  # PROVISIONAL pin (d_model=256, 4 blocks, ~2–3M params) — written rationale:
+  # (a) SUBSET SENSITIVITY: at 25% budgets (~7.7k utts) a small model keeps
+  #     train/val gaps informative; an oversized net would memorize every subset
+  #     and compress selector differences into noise. (b) RUNTIME: ~2–3M params
+  #     trains a full grid cell (~38 runs × both tracks) inside the Ada 2080 Ti
+  #     allocation without becoming the bottleneck of the equal-epochs protocol.
   n_conformer_heads: 4
-  conformer_ff_mult: 4
+  conformer_ff_mult: 4            # macaron FFN hidden = 4×d_model (half-steps)
   conv_kernel_size: 15
+  # NOTE: k=15 is a DELIBERATE deviation from the canonical Conformer k=32:
+  # our frames are 50 Hz RVQ tokens (20 ms) rather than 10 Hz audio frames, so
+  # the receptive field per layer is already doubled; k=15 keeps context ≈ the
+  # canonical design at half the kernel cost. Revisit ONLY if the 100% pilot
+  # WER stalls (per PROTOCOL review rule).
   dropout: 0.1
 
 training:
-  # PROVISIONAL
   batch_size: 32                  # utterances, full-sequence training (no crops)
   lr_peak: 5.0e-4
   warmup_steps: 2000              # PROVISIONAL — revisit at pilot
   weight_decay: 1.0e-6
   label_smoothing: 0.0
   n_epochs: null                  # set per-run by the equal-epochs protocol driver
+  train_seed: 20260826            # FIXED constant across ALL runs (PROTOCOL §3.11);
+                                  # subset identity lives in subset_seed/manifest name,
+                                  # never here
+  grad_clip_norm: 1.0             # PROVISIONAL
+  num_workers: 4
 
 augment:
-  # Fixed SpecAugment-style masking on the token stream (locked across all runs)
-  freq_mask_n: 2                  # masks over RVQ stream axis (applied to embedded features)
+  # Fixed SpecAugment-style masking on the token stream (locked across all runs);
+  # applied on embedded features, real frames only
+  freq_mask_n: 2                  # masks over model features (channel axis)
   freq_mask_width: 12
   time_mask_n: 2
-  time_mask_ratio_max: 0.15       # fraction of T per mask
+  time_mask_ratio_max: 0.15       # fraction of TRUE length per mask
 
 decode:
   greedy: true                    # no external LM, ever
@@ -37,3 +52,12 @@ logging:
   grad_norm_log_every_batches: 50   # gradient L2 norms per batch
   ckpt_every_epochs: 5              # feeds LESS trajectories later
   eval_metric: wer                  # jiwer WER on frozen internal val
+  metrics_file: metrics.parquet     # long-format rows incl. per-(utterance, epoch)
+                                    # mean train CTC loss — REQUIRED by Phase-4
+                                    # loss-ranking and Oracle-RHO
+  wandb:
+    mode: online                    # ONLINE is the default (egress verified, NET_OK
+                                    # api.wandb.ai); 'offline' remains a per-config
+                                    # fallback only
+    project: spell-rq2
+    entity: null                    # set via WANDB_ENTITY env or override yaml
