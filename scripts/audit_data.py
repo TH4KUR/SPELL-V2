@@ -101,9 +101,14 @@ def scan_trainval(root: Path, proto: ProtocolConfig, anomalies: Anomalies,
 
             row = _token_row(
                 uid, split="trainval", video_id=vdir.name, stem=stem,
-                tokens_path=str(tok), audio_path=str(mp4), audio_kind="mp4",
-                txt_path=str(vdir / txt_name), conf=conf, text_raw=text_raw,
-                proto=proto, anomalies=anomalies,
+                # §10 INDEX IS TRUTH: tokens/txt relpaths are SPLIT-FREE staged
+                # form (<video>/<stem>.*); split lives in the metadata column.
+                # audio_path stays a FULL source path — provenance of the raw
+                # container only; runtime consumers never resolve through it.
+                tokens_path=f"{vdir.name}/{stem}.tokens.pt",
+                audio_path=str(mp4), audio_kind="mp4",
+                txt_path=f"{vdir.name}/{txt_name}", conf=conf, text_raw=text_raw,
+                proto=proto, anomalies=anomalies, load_from=tok,
             )
             rows.append(row)
 
@@ -139,17 +144,22 @@ def scan_test(root: Path, proto: ProtocolConfig, anomalies: Anomalies,
 
         rows.append(_token_row(
             uid=stem, split="test", video_id="", stem=stem,
-            tokens_path=str(txt.parent / name), audio_path=str(wav), audio_kind="wav",
-            txt_path=str(txt) if txt.exists() else None,
+            tokens_path=name,                    # SPLIT-FREE staged form (§10)
+            audio_path=str(wav), audio_kind="wav",
+            txt_path=f"{stem}.txt" if txt.exists() else None,
             conf=conf, text_raw=text_raw, proto=proto, anomalies=anomalies,
+            load_from=tdir / name,
         ))
     return rows
 
 
 def _token_row(uid, *, split, video_id, stem, tokens_path, audio_path, audio_kind,
-               txt_path, conf, text_raw, proto, anomalies) -> dict:
+               txt_path, conf, text_raw, proto, anomalies, load_from=None) -> dict:
+    # `tokens_path` is the STORED (split-free, §10) provenance string; `load_from`
+    # is where the bytes actually live on the tree being audited. They differ by
+    # design — audits run against the raw split-prefixed source tree.
     try:
-        tokens = torch.load(tokens_path, map_location="cpu", weights_only=True)
+        tokens = torch.load(load_from or tokens_path, map_location="cpu", weights_only=True)
     except Exception as e:  # noqa: BLE001 - any unreadable tensor is an anomaly row
         anomalies.add(f"{split}_unreadable_tokens", f"{uid}: {e}")
         return {

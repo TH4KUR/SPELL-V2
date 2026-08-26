@@ -24,7 +24,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import pandas as pd  # noqa: E402
+import pandas as pd
+from types import SimpleNamespace  # noqa: E402
+
+import paths as data_paths  # noqa: E402  DATA LAYOUT LAW: single path authority
 
 
 def pick_utts(df: pd.DataFrame, n: int, seed: int) -> pd.DataFrame:
@@ -75,7 +78,9 @@ def main(argv: list[str] | None = None) -> int:
     for i, r in enumerate(utts.itertuples(), 1):
         stem = r.utterance_id.replace("/", "_")
         wav_path = args.out / f"{i:02d}_{stem}.wav"
-        decode_to_wav(Path(r.audio_path), wav_path)
+        rec = SimpleNamespace(audio_path=r.audio_path, video_id=getattr(r, "video_id", ""),
+                              stem=r.stem, utterance_id=r.utterance_id)
+        decode_to_wav(data_paths.resolve_audio_path(rec), wav_path)
         dur_check = (wav_path.stat().st_size - 44) / (2 * 16000)  # PCM16 mono bytes→s
         lines += [
             f"\n[{i:02d}] {wav_path.name}",

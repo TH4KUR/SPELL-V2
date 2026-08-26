@@ -57,7 +57,11 @@ def test_collate_text_ids():
     assert out["text_lengths"].tolist() == [3, 1]
 
 
-def test_tokendataset_loads_real_layout(tmp_path):
+def test_tokendataset_loads_via_injected_resolver(tmp_path):
+    """Unit-test fixtures pin their own files through the path_resolver seam
+    (production wires no resolver -> paths.resolve_token_path, DATA LAYOUT LAW)."""
+    from pathlib import Path
+
     from dataset import UtteranceRecord
 
     tokens = torch.randint(0, CODEBOOK_SIZE, (8, 13))
@@ -79,7 +83,7 @@ def test_tokendataset_loads_real_layout(tmp_path):
         text_norm="hello",
         n_chars_norm=5,
     )
-    ds = TokenDataset([rec])
+    ds = TokenDataset([rec], path_resolver=lambda r: Path(r.tokens_path))
     item = ds[0]
     assert item["tokens"].shape == (8, 13)
     assert item["n_tokens"] == 13

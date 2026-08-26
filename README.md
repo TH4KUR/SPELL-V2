@@ -12,8 +12,10 @@ Docs: `PLAN.md` (phased spec) · `RESEARCH.md` (study design) · `PROTOCOL.md` (
 
 - Corpus: **LRS3-TED** — Afouras, Chung, Senior, Vinyals, Ma, Zisserman,
   *Deep Audio-Visual Speech Recognition*, ICASSP 2018.
-- Layout: `datasets/LRS3/trainval/<video_id>/<stem>{.mp4,.txt,.tokens.pt}` (per-video
-  folders; numeric stems restart per folder, hence `<video_id>/<stem>` utterance IDs) and
+- Layout: CANONICAL STAGED TREE per `docs/layout.md` — `<data_root>/<video_id>/<stem>.{tokens.pt,txt,flac}`
+  (trainval), `<data_root>/<stem>.{tokens.pt,flac}` bare (test); split membership is index metadata
+  only. Raw audit-era SOURCE (laptop, historical): `datasets/LRS3/trainval/<video_id>/<stem>{.mp4,.txt,.tokens.pt}`
+  (per-video folders; numeric stems restart per folder, hence `<video_id>/<stem>` utterance IDs) and
   `datasets/LRS3/test/<id>{.wav,.tokens.pt}` (flat).
 - `.tokens.pt`: frozen SpeechTokenizer output, `[8, T]` int64 RVQ codes @50 Hz over
   [0,1024); codebook size 1024; stream index 0 = RVQ₁ (semantic). Verified in Phase 0 to

@@ -43,9 +43,9 @@ from dataset import (                               # noqa: E402
     filter_records,
     load_id_list,
     load_records,
-    rebase_records,
 )
 from hardware_guard import DEV_GPU_ENV, enforce_gpu_policy  # noqa: E402
+import paths as data_paths                          # noqa: E402  DATA LAYOUT LAW
 from lit_track_b import LitConformerCTC             # noqa: E402
 from manifest import _utc_now_iso, write_run_manifest  # noqa: E402
 from vocab import build_char_vocab                  # noqa: E402
@@ -118,11 +118,6 @@ def main(argv=None) -> int:
     val_ids = load_id_list(paths.splits_dir / "val_ids.txt")
     val_recs = filter_records(recs, val_ids, strict=False)
 
-    relocated = data_root_is_relocated(paths.dataset_root)
-    if relocated:
-        train_recs = rebase_records(train_recs, paths.dataset_root)
-        val_recs = rebase_records(val_recs, paths.dataset_root)
-
     if args.dev_max_train_utts:
         print(f"[DEV] capping TRAIN utterances {len(train_recs)} -> {args.dev_max_train_utts}")
         train_recs = train_recs[: args.dev_max_train_utts]
@@ -130,22 +125,23 @@ def main(argv=None) -> int:
         print(f"[DEV] capping VAL utterances {len(val_recs)} -> {args.dev_max_val_utts}")
         val_recs = val_recs[: args.dev_max_val_utts]
 
+    # -------- PREFLIGHT (§10 item 4): resolve random manifest utts BEFORE epoch 1
+    dp = data_paths.current()
+    print(f"[spell] data_root={dp.root} layout={dp.layout}", flush=True)
+    preflight_pairs = data_paths.preflight_resolve(
+        train_recs, k=min(50, len(train_recs)), seed=train_seed)
+    print(f"[spell] preflight: sampled {len(preflight_pairs)}/{len(train_recs)} "
+          f"manifest utts -> {len(preflight_pairs)}/{len(preflight_pairs)} token files present",
+          flush=True)
+
     return run_training(
         args=args, cfg=cfg, train_recs=train_recs, val_recs=val_recs,
-        vocab=vocab, train_seed=train_seed, n_epochs=n_epochs, relocated=relocated,
+        vocab=vocab, train_seed=train_seed, n_epochs=n_epochs,
     )
 
 
-def data_root_is_relocated(data_root: Path) -> bool:
-    """True when $SPELL_DATA_ROOT points away from the in-repo corpus tree."""
-    try:
-        return Path(data_root).resolve() != (PROJECT_ROOT / "datasets" / "LRS3").resolve()
-    except OSError:
-        return True
-
-
-def run_training(*, args, cfg, train_recs, val_recs, vocab, train_seed, n_epochs,
-                 relocated: bool) -> int:
+def run_training(*, args, cfg, train_recs, val_recs, vocab, train_seed,
+                 n_epochs: int) -> int:
     tcfg, lcfg = cfg["training"], cfg.get("logging", {})
     wcfg = lcfg.get("wandb", {})
 
@@ -164,8 +160,8 @@ def run_training(*, args, cfg, train_recs, val_recs, vocab, train_seed, n_epochs
         subset_manifest=args.subset_manifest,
         train_seed=train_seed, subset_seed=int(args.seed),
         started_iso=started_iso, status="running",
-        extra={"data_root": str(load_paths().dataset_root),
-               "data_root_relocated": relocated,
+        extra={"data_root": str(data_paths.current().root),
+               "data_layout": data_paths.current().layout,
                "dev_gpu_bypass": dev_active},
     )
 
@@ -226,8 +222,8 @@ def run_training(*, args, cfg, train_recs, val_recs, vocab, train_seed, n_epochs
         started_iso=started_iso, finished_iso=_utc_now_iso(),
         status="finished",
         extra={"final_val_wer": float(final_wer) if final_wer is not None else None,
-               "data_root": str(load_paths().dataset_root),
-               "data_root_relocated": relocated,
+               "data_root": str(data_paths.current().root),
+               "data_layout": data_paths.current().layout,
                "dev_gpu_bypass": dev_active},
     )
     print(f"[train_track_b] done — bundle at {run_dir}; drain later via scripts/drain_runs.sh")

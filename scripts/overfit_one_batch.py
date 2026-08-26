@@ -33,7 +33,8 @@ from dataset import (                         # noqa: E402
     collate_token_batch,
     load_records,
 )
-from hardware_guard import enforce_gpu_policy  # noqa: E402
+from hardware_guard import enforce_gpu_policy          # noqa: E402
+import paths as data_paths                             # noqa: E402  DATA LAYOUT LAW
 from lit_track_b import LitConformerCTC        # noqa: E402
 
 
@@ -76,6 +77,12 @@ def main(argv=None) -> int:
     recs = load_records(paths.index_path, split="trainval")
     recs = [r for r in recs if r.text_norm][:4000]
     use = pick_short_batch(recs, args.batch_utts)
+
+    # PREFLIGHT (§10 item 4): fail here, loudly, not mid-memorization.
+    dp = data_paths.current()
+    print(f"[spell] data_root={dp.root} layout={dp.layout}", flush=True)
+    data_paths.preflight_resolve(use, k=len(use))
+
     print(f"[overfit_one_batch] utterances:")
     for r in use:
         print(f"   {r.utterance_id}  T={r.n_tokens}  {r.text_norm[:60]!r}")

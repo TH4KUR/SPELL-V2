@@ -280,3 +280,21 @@ hardware drift guard. Earlier wording remains in git history.
    pilot's bundle lacks `--run-manifest-out` provenance — reconcile post-run if
    it matters downstream (see handoff); Phase-2+ must never need this class of
    bypass again because the template now reads plans by ID with loud fatals.
+4. **DATA LAYOUT LAW**: `docs/layout.md` declares the canonical staged tree
+   (`<root>/<VIDEO_ID>/<stem>.{tokens.pt,txt,flac}`; `<root>/<stem>.*` bare for
+   test); the loader (`paths.py`, the single path authority) validates against
+   it at startup and deviations ABORT LOUDLY before epoch 1 (preflight).
+   NO module may concatenate `dataset_root + split + folder` heuristics;
+   split membership is never a filesystem segment. (Birthed by Pilot A failing
+   three times on an imagined `<root>/trainval/<VIDEO_ID>/…` layout.)
+5. **INDEX IS TRUTH**: where an utterance's bytes live comes ONLY from
+   `data_index.parquet` identity columns (video_id, stem, split) plus the
+   declared filename pattern; a new staging pass must regenerate the index AND
+   pass `stage_to_ada.py --verify` before anything consumes it. There are never
+   two parallel truths about locations; stored `*_path` strings are raw-source
+   provenance, not runtime addresses.
+6. **ATOMIC LAYOUT CHANGES**: any future staging/layout change lands in ONE
+   commit containing ALL of: index regeneration + loader adjustment
+   (`paths.py` + consumers) + `docs/layout.md` update + tests (layout suite +
+   regression UID `0D9QIG36J9Q/50001`). Half-migrated states are protocol
+   violations even when each half is individually correct.

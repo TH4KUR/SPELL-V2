@@ -41,9 +41,9 @@ from dataset import (                                   # noqa: E402
     filter_records,
     load_id_list,
     load_records,
-    rebase_records,
 )
 from hardware_guard import enforce_gpu_policy           # noqa: E402
+import paths as data_paths                              # noqa: E402  DATA LAYOUT LAW
 from lit_track_b import LitConformerCTC                 # noqa: E402
 from manifest import _utc_now_iso                       # noqa: E402
 
@@ -89,12 +89,14 @@ def main(argv=None) -> int:
     paths = load_paths()
     index_split = "trainval" if args.split == "val" else "test"
     recs = load_records(paths.index_path, split=index_split)
-    relocated = Path(paths.dataset_root).resolve() != (PROJECT_ROOT / "datasets" / "LRS3").resolve()
-    if relocated:
-        recs = rebase_records(recs, paths.dataset_root)
     if args.split == "val":
         val_ids = load_id_list(paths.splits_dir / "val_ids.txt")
         recs = filter_records(recs, val_ids, strict=False)
+
+    # PREFLIGHT before any batch runs (§10 item 4) — resolve k random utts.
+    dp = data_paths.current()
+    print(f"[spell] data_root={dp.root} layout={dp.layout}", flush=True)
+    data_paths.preflight_resolve(recs, k=min(50, len(recs)))
 
     collate = partial(collate_token_batch, token_pad_id=-1, text_pad_id=vocab.pad_id)
     dl = DataLoader(

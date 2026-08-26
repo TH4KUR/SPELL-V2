@@ -8,7 +8,6 @@ MUST be out of range and every consumer must mask via the returned lengths/mask.
 
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -97,60 +96,40 @@ def filter_records(
     return [r for r in records if r.utterance_id in wanted]
 
 
-def rebase_records(
-    records: list[UtteranceRecord], new_root: str | Path | None = None
-) -> list[UtteranceRecord]:
-    """Resolve record file paths for the current data location.
-
-    ``data_index.parquet`` stores repo-root-relative paths (``datasets/LRS3/<split>/…``).
-    Repo-local runs use them as-is (``new_root=None``). Runs against a relocated
-    staged tree ($SPELL_DATA_ROOT on Ada) strip that two-component prefix and join
-    ``new_root`` — the staged layout mirrors it exactly under the data root.
-    Audio extension swap (mp4→FLAC) is a Phase-2 concern; paths here stay tokens/txt.
-    """
-    if new_root is None:
-        return records
-    root = Path(new_root)
-
-    def _retarget(path_str: str | None) -> str | None:
-        if path_str is None:
-            return None
-        parts = Path(path_str).parts
-        parts = parts[2:] if len(parts) > 2 and parts[:2] == ("datasets", "LRS3") else parts
-        return str(root.joinpath(*parts))
-
-    return [
-        dataclasses.replace(
-            r,
-            tokens_path=_retarget(r.tokens_path),
-            txt_path=_retarget(r.txt_path),
-            audio_path=_retarget(r.audio_path),
-        )
-        for r in records
-    ]
-
-
 class TokenDataset(Dataset):
-    """Full-utterance token streams; optionally CTC targets from a CharVocab."""
+    """Full-utterance token streams; optionally CTC targets from a CharVocab.
+
+    File locations come from paths.resolve_token_path (DATA LAYOUT LAW, §10) —
+    NEVER from the record's legacy ``tokens_path`` string column. Tests with a
+    synthetic tree may inject ``path_resolver=lambda rec: Path(rec.tokens_path)``
+    to pin their own fixture files; production passes nothing.
+    """
 
     def __init__(
         self,
         records: list[UtteranceRecord],
         vocab=None,                 # optional vocab.CharVocab
         include_text: bool = False,
+        path_resolver=None,         # None = canonical paths.resolve_token_path
     ):
         if not records:
             raise ValueError("empty record list")
         self.records = records
         self.vocab = vocab
         self.include_text = include_text
+        if path_resolver is None:
+            import paths as _paths
+
+            path_resolver = _paths.resolve_token_path
+        self._resolve_path = path_resolver
 
     def __len__(self) -> int:
         return len(self.records)
 
     def __getitem__(self, idx: int) -> dict:
         rec = self.records[idx]
-        tokens = torch.load(rec.tokens_path, map_location="cpu", weights_only=True)
+        tokens = torch.load(
+            self._resolve_path(rec), map_location="cpu", weights_only=True)
         if tokens.dtype != torch.int64:
             tokens = tokens.long()
         item: dict = {

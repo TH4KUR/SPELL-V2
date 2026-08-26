@@ -1,18 +1,17 @@
 #!/usr/bin/env python
 """Phase 0b — stage the dataset to Ada ($HOME/spell/data), sha256-manifested.
 
-BLOCKING gate before Phase 1. Produces, under --dest:
+BLOCKING gate before Phase 1. Produces under --dest the CANONICAL STAGED
+LAYOUT (docs/layout.md; paths built by paths.py, never inline):
 
-    <dest>/trainval/<video_id>/<stem>.tokens.pt   (copied verbatim)
-    <dest>/trainval/<video_id>/<stem>.txt         (copied verbatim)
-    <dest>/trainval/<video_id>/<stem>.flac        (16 kHz mono FLAC, from .mp4)
-    <dest>/test/<id>.tokens.pt / .txt / .flac     (from .wav)
-    <dest>/manifest.parquet + manifest_summary.json
+    <dest>/<VIDEO_ID>/<stem>.tokens.pt | .txt | .flac   # split=trainval utts
+    <dest>/<stem>.tokens.pt | .txt | .flac              # split=test: BARE files
 
-Why FLAC: mp4 containers are awkward for training loops and PCM wav would cost
-~3.4 GB; 16 kHz mono FLAC is lossless, ~half the size, and one file per
-utterance. The dataset lives ONLY in $HOME/spell/data on Ada (30 GB/300k-inode
-quota) — /share1 must never hold per-utterance files (~3200-inode cap).
+Split membership is METADATA ONLY (data_index.split) — the filesystem carries
+no split segment. Why FLAC: mp4 containers are awkward for training loops and
+PCM wav would cost ~3.4 GB; 16 kHz mono FLAC is lossless, ~half the size, one
+file per utterance. The dataset lives ONLY in $HOME/spell/data on Ada
+(30 GB/300k-inode quota) — /share1 must never hold per-utterance files.
 
 Runs anywhere the source exists (laptop pilot or Ada). Deterministic layout;
 --verify re-hashes an existing staging tree against its manifest.
@@ -75,7 +74,15 @@ def copy_file(src: Path, dst: Path) -> None:
 
 
 def plan_jobs(source: Path, dest: Path, limit: int | None) -> list[dict]:
-    """Enumerate (src, dst_relpath, kind) jobs from the audited layout."""
+    """Enumerate (src, dst_relpath, kind) jobs from the audited layout.
+
+    Destination relpaths come from paths.*_relpath — the SAME functions the
+    runtime resolver uses (DATA LAYOUT LAW §10; the two sides cannot diverge).
+    Source files sit under ``<source>/<split>/`` on the raw tree; split
+    membership comes from the index metadata column.
+    """
+    import paths as p
+
     index_path = PROJECT_ROOT / "data_index.parquet"
     if not index_path.exists():
         raise SystemExit(f"missing {index_path} — run scripts/audit_data.py first")
@@ -86,14 +93,29 @@ def plan_jobs(source: Path, dest: Path, limit: int | None) -> list[dict]:
                 .apply(lambda g: g.sort_values("utterance_id").head(limit)))
     jobs: list[dict] = []
     for r in df.itertuples():
-        rel_dir = Path(r.video_id) if r.video_id else Path("")
-        base = rel_dir / r.stem
-        src_audio_ext = ".mp4" if r.audio_kind == "mp4" else ".wav"
-        jobs.append({"src": Path(r.tokens_path), "rel": base.with_suffix(".tokens.pt").as_posix(), "kind": KIND_TOKENS})
+        src_split_root = source / r.split          # raw tree: <root>/<split>/...
+        tok_rel = p.current().tokens_relpath(r.video_id, r.stem)
+
+        def _src(col: str, rel) -> Path:
+            """Migration shim (delete after the next audit regen): the committed
+            pre-law index stores FULL audit-era source paths (with split
+            prefix); post-law regens store SPLIT-FREE relpaths, reconstructed
+            here against the raw tree's split dir. Verbatim wins while it exists."""
+            v = getattr(r, col)
+            cand = None if pd.isna(v) else Path(v)
+            if cand is not None and cand.is_file():
+                return cand
+            return src_split_root / rel
+
+        jobs.append({"src": _src("tokens_path", tok_rel),
+                     "rel": tok_rel.as_posix(), "kind": KIND_TOKENS})
         if r.txt_path and not pd.isna(r.txt_path):
-            jobs.append({"src": Path(r.txt_path), "rel": base.with_suffix(".txt").as_posix(), "kind": KIND_TRANSCRIPT})
-        jobs.append({"src": Path(r.audio_path), "rel": str(base) + ".flac", "kind": KIND_AUDIO,
-                     "audio_src_ext": src_audio_ext})
+            txt_rel = p.current().transcript_relpath(r.video_id, r.stem)
+            jobs.append({"src": _src("txt_path", txt_rel),
+                         "rel": txt_rel.as_posix(), "kind": KIND_TRANSCRIPT})
+        jobs.append({"src": Path(r.audio_path),      # provenance: original container
+                     "rel": p.current().flac_relpath(r.video_id, r.stem).as_posix(),
+                     "kind": KIND_AUDIO})
     return jobs
 
 

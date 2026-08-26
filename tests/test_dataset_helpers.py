@@ -1,24 +1,26 @@
-"""dataset.py helper round: load_id_list parsing, filter_records strictness and
-rebase_records path retargeting (repo-relative → $SPELL_DATA_ROOT)."""
+"""dataset.py helper round: load_id_list parsing, filter_records strictness,
+and the TokenDataset path-resolver seam.
 
-import dataclasses
+(`rebase_records` was DELETED under the DATA LAYOUT LAW, §10 item 4: path
+retargeting is not a per-record data munging concern anymore — locations come
+from paths.py keyed on (video_id, stem); layout tests live in
+tests/test_layout_resolution.py.)"""
 
 import pytest
 
-from dataset import UtteranceRecord, filter_records, load_id_list, rebase_records
+from dataset import UtteranceRecord, filter_records, load_id_list
 
 
-def make_rec(uid: str, tokens_path: str | None = None,
-             txt_path: str | None = None, audio_path: str | None = None) -> UtteranceRecord:
+def make_rec(uid: str) -> UtteranceRecord:
     return UtteranceRecord(
         utterance_id=uid,
         split="trainval",
-        video_id=uid.split("/")[0],
+        video_id=uid.split("/")[0] if "/" in uid else "",
         stem=uid.split("/")[1] if "/" in uid else uid,
-        tokens_path=tokens_path or f"datasets/LRS3/trainval/{uid}.npz",
-        audio_path=audio_path,
-        audio_kind="mp4" if audio_path else None,
-        txt_path=txt_path or f"datasets/LRS3/trainval/{uid}.txt",
+        tokens_path=f"datasets/LRS3/trainval/{uid}.tokens.pt",   # provenance string only
+        audio_path=None,
+        audio_kind=None,
+        txt_path=None,
         n_tokens=100,
         duration_s=4.0,
         conf=90,
@@ -79,47 +81,46 @@ def test_filter_records_empty_request_yields_empty():
     assert filter_records(recs, set()) == []
 
 
-# ---------------------------------------------------------------- rebase_records
+# ------------------------------------------------- TokenDataset resolver seam
 
-def _rebase_target_fields(r):
-    return r.tokens_path, r.txt_path, r.audio_path
+def _write_tokens(tmp_path):
+    import torch
 
-
-def test_rebase_none_returns_input_unchanged():
-    recs = [make_rec("v/u1")]
-    out = rebase_records(recs, None)
-    assert out is recs                                # repo-local runs use paths as-is
+    p = tmp_path / "fake.pt"
+    torch.save(torch.zeros(8, 5), p)
+    return p
 
 
-def test_rebase_strips_two_component_prefix_and_joins_root():
-    recs = [make_rec("v/u1", audio_path="datasets/LRS3/trainval/v/u1.mp4")]
-    rebased = rebase_records(recs, "/data/LRS3_staged")
-    tp, xp, ap = _rebase_target_fields(rebased[0])
-    assert tp == "/data/LRS3_staged/trainval/v/u1.npz"
-    assert xp == "/data/LRS3_staged/trainval/v/u1.txt"
-    assert ap == "/data/LRS3_staged/trainval/v/u1.mp4"
+def test_tokendataset_injected_resolver_wins(tmp_path):
+    """path_resolver is the unit-test injection point (§10 item 4): given a
+    resolver, __getitem__ loads exactly what it returns."""
+    from dataset import TokenDataset
+
+    p = _write_tokens(tmp_path)
+    seen = []
+    ds = TokenDataset([make_rec("v/u1")],
+                      path_resolver=lambda rec: seen.append(rec.utterance_id) or p)
+    item = ds[0]
+    assert item["n_tokens"] == 5
+    assert seen == ["v/u1"]
 
 
-def test_rebase_preserves_none_paths():
-    rec = dataclasses.replace(make_rec("v/u2"), txt_path=None, audio_path=None,
-                              audio_kind=None)
-    rebased = rebase_records([rec], "/data")
-    assert rebased[0].txt_path is None
-    assert rebased[0].audio_path is None
-    assert rebased[0].tokens_path == "/data/trainval/v/u2.npz"
+def test_tokendataset_default_resolver_goes_through_paths_authority(tmp_path, monkeypatch):
+    """With NO injected resolver, loads flow through paths.resolve_token_path —
+    i.e. the DATA LAYOUT LAW holds by construction in production wiring."""
+    from pathlib import Path
 
+    import paths as paths_mod
+    from dataset import TokenDataset
 
-def test_rebase_leaves_short_paths_whole_after_join():
-    """Only a verbatim 'datasets/LRS3' prefix is stripped; anything else is joined
-    under the root untouched."""
-    rec = dataclasses.replace(make_rec("v/u3"),
-                              tokens_path="trainval/v/u3.npz")
-    rebased = rebase_records([rec], "/data")
-    assert rebased[0].tokens_path == "/data/trainval/v/u3.npz"
+    staged = tmp_path / "root" / "v" / "u1.tokens.pt"
+    staged.parent.mkdir(parents=True)
+    import torch
+    torch.save(torch.zeros(8, 3), staged)
 
+    fake = paths_mod.DataPaths(root=tmp_path / "root", layout="staged")
+    monkeypatch.setattr(paths_mod, "current", lambda: fake)
 
-def test_rebase_returns_new_objects_originals_unmutated():
-    recs = [make_rec("v/u4")]
-    original_tokens_path = recs[0].tokens_path
-    rebase_records(recs, "/somewhere")
-    assert recs[0].tokens_path == original_tokens_path
+    ds = TokenDataset([make_rec("v/u1")])          # default: lazy paths authority
+    item = ds[0]
+    assert item["n_tokens"] == 3 and Path(item["utterance_id"]) == Path("v/u1")
