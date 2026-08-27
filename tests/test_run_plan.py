@@ -172,7 +172,14 @@ def test_template_routes_through_index_free_reader_with_guards():
     assert 'SLURM_ARRAY_TASK_ID:?array context required' in body
     assert 'readarray' not in body and '$((SLURM_ARRAY_TASK_ID + ' not in body
     assert "--run-manifest-out" in body                    # bypass parity, §10
-    assert 'touch "$RUN_DIR/COMPLETED"' in body            # relay marker on EXIT
+    # single-writer law (§10 item 9): the EXIT trap NEVER writes COMPLETED —
+    # success attestation lives inside the training entrypoint, not shell rc.
+    for ln in body.splitlines():
+        if "touch" in ln:
+            assert "COMPLETED" not in ln, f"trap must never mark bundles: {ln!r}"
+        if "COMPLETED" in ln and "#SBATCH" not in ln:
+            assert "touch" not in ln
+    assert "FAILED rc=" in body                            # loud failure instead
     assert "run_manifest" in body
 
 

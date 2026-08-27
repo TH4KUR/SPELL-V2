@@ -143,9 +143,13 @@ laptop filesystem.
    manifest). No per-utterance files anywhere else; NEVER on /share1.
 2. **Relay archiving, LOCKED**: compute nodes CANNOT see /share1 (verified; mounts vary
    per node). Runs bundle under `$HOME/spell/runs/<run_id>/` (ckpts + metrics.parquet,
-   ≤~20 files per run) with a `COMPLETED` marker written by an EXIT trap;
-   `scripts/drain_runs.sh` verifies and moves bundles to `/share1/$USER/spell/runs/`
-   from a mounted node. Direct writes outside $HOME are rejected by policy everywhere
+   ≤~20 files per run) with a `COMPLETED` marker written IN-PROCESS by the
+   training entrypoint on trainer-attested success (single-writer law, §10
+   item 9) — shell traps are cleanup-only;
+   `scripts/drain_runs.sh` independently validates content-provenance (marker +
+   metrics for both splits + loadable last.ckpt + manifest keys; refusals name
+   the failed check, `--verify-only` gates archiving) and moves validated
+   bundles to `/share1/$USER/spell/runs/` from a mounted node. Direct writes outside $HOME are rejected by policy everywhere
    (`archive_mode != "relay"` raises).
 3. **$HOME gates before every launch**: usage warn ≥20 GB, abort ≥23 GB;
    inode warn at 240k. `scripts/check_storage.py --strict` runs at job start in the
@@ -344,3 +348,20 @@ hardware drift guard. Earlier wording remains in git history.
    Any future logging path must prove itself against the spy-logger fit test
    (`tests/test_val_wandb_series.py`: exactly-once emission, sanity suppressed)
    — a stub-mocked Trainer cannot catch logger-boundary regressions.
+9. **COMPLETED = trainer-attested success, written in-process, never by shell
+   traps** (2026-08-27): crashed bypass bundles carried EXIT-trap-written
+   markers that the drainer accepted as valid — process exit ≠ training
+   success. The fix is a SINGLE-WRITER LAW: `train_track_b.attest_completed()`
+   (the training entrypoint's last statement, after clean fit + durable
+   metrics) is the ONLY writer repo-wide, mechanically enforced by
+   `tests/test_single_writer_law.py` (exactly one writer context allowed).
+   History: THREE writers existed — bash traps rc-gated at best, a callback
+   `on_train_end` writer safe only by accident (Lightning's fit loop has no
+   finally around `on_run_end`, so exceptions skip the hook by design) whose
+   status guard was dead code (`TrainerStatus` has no STOPPED), and now the
+   entrypoint. `drain_runs.sh` additionally re-validates content-provenance
+   independently (marker alone insufficient; ≥1 epoch row per split,
+   weights_only-loadable ckpt, manifest keys) with named refusals and a
+   `--verify-only` mode — auto-discovery depth was also silently wrong
+   (mindepth/maxdepth 2 can never see `<runs>/<track>/<id>/`) and is pinned
+   exact. Archiving of Pilot A's bundle clears only via `--verify-only`.

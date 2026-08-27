@@ -87,6 +87,69 @@ def _run_storage_gate(strict_env: bool) -> None:
         sys.exit(f"FATAL: storage gate failed ({'strict' if strict_env else 'soft'} mode)")
 
 
+def attest_completed(run_dir: Path) -> Path:
+    """THE single COMPLETED writer (single-writer law, PROTOCOL §10 item 9).
+
+    Called ONLY as this entrypoint's last success-path statement — i.e. after
+    ``trainer.fit()`` returned cleanly and ``run_manifest.json`` was rewritten
+    with status="finished". Before touching the marker it demands the bundle's
+    content-provenance already be DURABLE on disk:
+
+      * metrics.parquet loads AND holds >= 1 epoch row for BOTH splits;
+      * ``last.ckpt`` exists;
+
+    then fsyncs the metrics file and the bundle directory so the marker can
+    never hit disk ordered ahead of the numbers it attests. Any shortfall
+    raises LOUDLY and leaves the bundle unmarked (a marker without provenance
+    is exactly how dead bypass bundles once posed as good ones). Shell EXIT
+    traps NEVER touch this filename; drain_runs.sh independently re-validates
+    everything checked here.
+    """
+    run_dir = Path(run_dir)
+    metrics_path = run_dir / "metrics.parquet"
+    missing: list[str] = []
+    split_counts: dict[str, int] | None = None
+    if not metrics_path.is_file():
+        missing.append("metrics.parquet (missing)")
+    else:
+        import pandas as pd                       # deferred: only needed on this path
+
+        try:
+            df = pd.read_parquet(metrics_path)
+            split_counts = {s: int((df["split"] == s).sum()) for s in ("train", "val")}
+            if min(split_counts.values()) < 1:
+                missing.append(f"metrics.parquet needs >=1 epoch row per split "
+                               f"(got {split_counts})")
+        except Exception as exc:                  # noqa: BLE001 — refuse on ANY probe failure
+            missing.append(f"metrics.parquet unreadable: {exc}")
+    last_ckpt = run_dir / "last.ckpt"
+    if not last_ckpt.is_file():
+        missing.append("last.ckpt (missing)")
+    if missing:
+        raise RuntimeError(
+            "[train_track_b] REFUSING to mark COMPLETED — bundle lacks provenance:\n  - "
+            + "\n  - ".join(missing)
+        )
+
+    # durability BEFORE attestation: fsync the parquet bytes, then the directory
+    # entries holding both files, ordering marker strictly after data.
+    fd = os.open(metrics_path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    dfd = os.open(run_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+    # THE sanctioned writer context — deliberately kept as ONE physical line
+    # so tests/test_single_writer_law.py can anchor the repo-wide invariant.
+    (run_dir / "COMPLETED").touch()
+    return run_dir / "COMPLETED"
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     _guard_dev_flags(args)
@@ -230,7 +293,12 @@ def run_training(*, args, cfg, train_recs, val_recs, vocab, train_seed,
                "data_layout": data_paths.current().layout,
                "dev_gpu_bypass": dev_active},
     )
-    print(f"[train_track_b] done — bundle at {run_dir}; drain later via scripts/drain_runs.sh")
+    # SINGLE-WRITER LAW (PROTOCOL §10 item 9): the ONLY COMPLETED writer in the
+    # repo — reached solely after fit returned cleanly + final manifest write;
+    # attest_completed itself refuses unless metrics/ckpt provenance is durable.
+    marker = attest_completed(run_dir)
+    print(f"[train_track_b] done — bundle at {run_dir} ({marker.name}); "
+          "drain later via scripts/drain_runs.sh")
     return 0
 
 

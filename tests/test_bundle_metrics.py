@@ -1,6 +1,8 @@
 """Bundle contract (PROTOCOL §5.2): long-format metrics.parquet contents,
 trajectory checkpoint naming cadence, atomic-file discipline, ≤20-file cap,
-sanity-check suppression and the COMPLETED-marker semantics."""
+sanity-check suppression, and the SINGLE-WRITER COMPLETED law (§10 item 9):
+the callback never attests completion — only train_track_b.attest_completed
+does, strictly after durable provenance."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +13,7 @@ import pytest
 import torch
 
 from ckpt_bundle import METRICS_COLUMNS, BundleCallback
+from scripts.train_track_b import attest_completed   # THE one sanctioned writer
 
 
 # --------------------------------------------------------------- stub plumbing
@@ -214,23 +217,6 @@ def test_real_trainer_checkpoint_branches(tmp_path):
 
     dl = DataLoader(TensorDataset(torch.randn(8, 3)), batch_size=4)
 
-    class FitModule(DrainableModule):
-        def __init__(self):
-            super().__init__(_empty_payload())
-            self.net = torch.nn.Linear(3, 1)
-
-        def training_step(self, batch, _idx):
-            loss = (self.net(batch[0].float()) ** 2).mean()
-            self.stage_payload({"train": [("t0", float(loss))],
-                                "train_drops": 0, "val": None})
-            return loss
-
-        def validation_step(self, batch, _idx):
-            return None
-
-        def configure_optimizers(self):
-            return torch.optim.SGD(self.parameters(), lr=1e-2)
-
     run_dir = tmp_path / "fitrun"
     cb = BundleCallback(run_dir, ckpt_every_epochs=2)
     trainer = pl.Trainer(
@@ -253,33 +239,150 @@ def test_real_trainer_checkpoint_branches(tmp_path):
                       weights_only=False)
     assert "state_dict" in traj and "optimizer_states" not in traj
     assert "optimizer_states" in last
-    # metrics flow + clean-finish marker
+    # metrics flow; single-writer law: a clean real fit does NOT attest by
+    # itself — the callback wrote train rows, and no COMPLETED exists anywhere;
     df = pd.read_parquet(run_dir / "metrics.parquet")
     assert len(df[(df.split == "train") & (df.metric == "loss")]) >= 3
-    assert (run_dir / "COMPLETED").exists()
+    assert not (run_dir / "COMPLETED").exists()
+    # (attest_completed success-path pinning lives in
+    # test_attestation_refuses_incomplete_provenance[healthy twin] and the
+    # drain-validation subprocess suite — this fit has no val side.)
 
 
-def test_completed_marker_semantics(tmp_path):
-    # The hook fires while status still reads RUNNING (flag flips after fit);
-    # 'not STOPPED' ⇒ clean. Real statuses stringify as "TrainerStatus.X".
-    d1 = tmp_path / "running"
-    cb1 = BundleCallback(d1)
-    cb1.on_train_end(_StubTrainer(status="TrainerStatus.RUNNING"),
-                     DrainableModule(_payload()))       # leftover drain must not crash
-    assert (d1 / "COMPLETED").exists()
+def test_callback_never_attests_completion(tmp_path):
+    """Single-writer law (§10 item 9): BundleCallback.on_train_end writes NO
+    COMPLETED under ANY status. Attestation belongs solely to the training
+    entrypoint's last statement — the old status-sniffing here was also dead
+    code (lightning has no STOPPED state; interrupts carry INTERRUPTED)."""
+    for i, status in enumerate(("TrainerStatus.RUNNING",       # hook fires with this
+                                "TrainerStatus.FINISHED",      # post-teardown value
+                                "TrainerStatus.INTERRUPTED")): # real interrupt value
+        d = tmp_path / f"status{i}"
+        BundleCallback(d).on_train_end(
+            _StubTrainer(status=status),
+            DrainableModule(_payload()))         # leftover drain must not crash
+        assert not (d / "COMPLETED").exists(), status
 
-    d2 = tmp_path / "finished"
-    cb2 = BundleCallback(d2)
-    cb2.on_train_end(_StubTrainer(status="TrainerStatus.FINISHED"),
-                     DrainableModule(_empty_payload()))
-    assert (d2 / "COMPLETED").exists()
 
-    # interrupt ⇒ deliberately ABSENT so drainers skip the bundle
-    d3 = tmp_path / "aborted"
-    cb3 = BundleCallback(d3)
-    cb3.on_train_end(_StubTrainer(status="TrainerStatus.STOPPED"),
-                     DrainableModule(_empty_payload()))
-    assert not (d3 / "COMPLETED").exists()
+def _run_tiny_fit(run_dir, *, max_epochs: int = 1,
+                  boom_after_batch: int | None = None):
+    """Tiny REAL-Trainer CPU fit against the real bundle callback.
+    ``boom_after_batch`` makes training_step RAISE on the n-th batch+1 call —
+    a synthetic mid-training failure."""
+    from torch.utils.data import DataLoader, TensorDataset
+
+    class FitModule(DrainableModule):
+        def __init__(self):
+            super().__init__(_empty_payload())
+            self.net = torch.nn.Linear(3, 1)
+            self.calls = 0
+
+        def training_step(self, batch, _idx):
+            self.calls += 1
+            if boom_after_batch is not None and self.calls >= boom_after_batch:
+                raise RuntimeError("synthetic mid-run training failure")
+            loss = (self.net(batch[0].float()) ** 2).mean()
+            self.stage_payload({"train": [(f"t{self.calls}", float(loss))],
+                                "train_drops": 0, "val": None})
+            return loss
+
+        def validation_step(self, batch, _idx):
+            return None
+
+        def configure_optimizers(self):
+            return torch.optim.SGD(self.parameters(), lr=1e-2)
+
+    dl = DataLoader(TensorDataset(torch.randn(8, 3)), batch_size=4)
+    cb = BundleCallback(run_dir, ckpt_every_epochs=100)
+    trainer = pl.Trainer(
+        max_epochs=max_epochs, accelerator="cpu", devices=1,
+        callbacks=[cb], logger=False, enable_checkpointing=False,
+        enable_progress_bar=False, enable_model_summary=False,
+        num_sanity_val_steps=0,
+    )
+    trainer.fit(FitModule(), dl, dl)
+    return cb
+
+
+def test_crashed_fit_leaves_no_marker(tmp_path):
+    """Boundary pin: fit raising mid-training unwinds past on_train_end BY
+    DESIGN of lightning's fit loops (no finally around on_run_end) — and under
+    the single-writer law nothing may leave a COMPLETED behind regardless."""
+    run_dir = tmp_path / "crashrun"
+    with pytest.raises(RuntimeError, match="synthetic"):
+        _run_tiny_fit(run_dir, max_epochs=1, boom_after_batch=2)
+
+    assert list(run_dir.rglob("COMPLETED")) == []     # nowhere in the tree
+    # whatever partial artifacts materialized stay INTACT but UNTRUSTED:
+    for fname in ("metrics.parquet", "last.ckpt"):
+        p = run_dir / fname
+        if p.exists():
+            assert p.is_file()
+    # ...and attestation refuses loudly on that provenance — never marks.
+    with pytest.raises(RuntimeError, match="REFUSING"):
+        attest_completed(run_dir)
+    assert not (run_dir / "COMPLETED").exists()
+
+
+def test_attestation_refuses_incomplete_provenance(tmp_path):
+    """attest_completed is the single writer AND a provenance gate: missing /
+    empty metrics, or a missing last.ckpt each refuse WITHOUT creating the
+    filename anywhere in the bundle tree."""
+    base = tmp_path / "b"
+    d_no_parquet = base / "no_parquet"
+    d_empty = base / "empty_rows"
+    d_train_only = base / "train_only"
+    d_no_ckpt = base / "no_ckpt"
+    healthy = base / "healthy"
+
+    rows = [
+        {"epoch": 1, "split": "train", "utterance_id": "u1", "metric": "loss", "value": 0.5},
+        {"epoch": 1, "split": "val", "utterance_id": None, "metric": "wer", "value": 0.4},
+        {"epoch": 1, "split": "val", "utterance_id": None, "metric": "loss", "value": 1.25},
+    ]
+
+    BundleCallback(d_no_parquet)                       # creates the dir only
+    for d in (d_empty, d_train_only, healthy):
+        d.mkdir(parents=True)
+    pd.DataFrame(columns=METRICS_COLUMNS).to_parquet(d_empty / "metrics.parquet")
+    pd.DataFrame([rows[0]]).to_parquet(d_train_only / "metrics.parquet")
+    torch.save({"state_dict": {}}, d_train_only / "last.ckpt")
+    d_no_ckpt.mkdir(parents=True)
+    pd.DataFrame(rows).to_parquet(d_no_ckpt / "metrics.parquet")   # ckpt absent
+    torch.save({"state_dict": {}}, healthy / "last.ckpt")
+    pd.DataFrame(rows).to_parquet(healthy / "metrics.parquet")
+
+    cases = [
+        (d_no_parquet, r"metrics\.parquet \(missing\)"),
+        (d_empty, "epoch row per split"),
+        (d_train_only, "epoch row per split"),         # val side absent ⇒ both-splits rule
+        (d_no_ckpt, r"last\.ckpt \(missing\)"),
+    ]
+    for d, fragment in cases:
+        with pytest.raises(RuntimeError, match=fragment):
+            attest_completed(d)
+        assert list(d.rglob("COMPLETED")) == [], d.name
+
+    # the healthy twin passes and marks — isolating the gate from the writer
+    marker = attest_completed(healthy)
+    assert marker == healthy / "COMPLETED" and marker.exists()
+
+
+def test_clean_fit_returning_with_hollow_metrics_refuses(tmp_path):
+    """The user's boundary case (fit RETURNS cleanly but the final metrics
+    payload failed/was lost): the last-statement attestation inspects DURABLE
+    state, not fit's return code — a schema-correct but row-less parquet gets
+    REFUSED, and no COMPLETED can exist."""
+    run_dir = tmp_path / "hollow-after-fit"
+    cb = _run_tiny_fit(run_dir, max_epochs=1)
+    assert cb.run_dir == run_dir                       # sanity on the helper seam
+    # simulate lost final durability: replace with zero-row, correct-schema table
+    pd.DataFrame(columns=METRICS_COLUMNS).to_parquet(run_dir / "metrics.parquet")
+    torch.save({"state_dict": {"w": torch.zeros(1)}}, run_dir / "last.ckpt")
+    assert not (run_dir / "COMPLETED").exists()
+    with pytest.raises(RuntimeError, match="epoch row per split"):
+        attest_completed(run_dir)
+    assert list(run_dir.rglob("COMPLETED")) == []
 
 
 def test_file_cap_enforced_at_construction(tmp_path):

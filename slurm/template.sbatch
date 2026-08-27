@@ -24,8 +24,11 @@
 #   * Compute nodes CANNOT write /share1 (mounts vary per node). Everything is
 #     written under $HOME (quota 30G/300k inodes; gates warn 20G / abort 23G).
 #   * Relay archiving ONLY: bundles land in runs/<track>/<run_id>/ under this
-#     checkout with a COMPLETED marker written by the EXIT trap below;
-#     scripts/drain_runs.sh moves them to /share1/$USER/spell/runs (§5.0).
+#     checkout. COMPLETED is TRAINER-ATTESTED success — written IN-PROCESS by
+#     the training entrypoint as its last statement after durable metrics
+#     (single-writer law, PROTOCOL §10 item 9); the EXIT trap below NEVER
+#     touches it. scripts/drain_runs.sh moves validated bundles to
+#     /share1/$USER/spell/runs (§5.0).
 #   * This job ALWAYS runs from ~/spell/repo, synced ONLY via git (§5.7):
 #     laptop commits -> pushes to its `ada` remote; this checkout pulls.
 #     rsync or any bulk copy into it is FORBIDDEN. Editing ANY tracked file
@@ -91,12 +94,14 @@ RUN_DIR="runs/$RUN_ID"
 mkdir -p "$RUN_DIR"
 
 cleanup() {
-    # Relay contract: COMPLETED means "clean finish, drain may take it".
-    # A crashed python (non-zero script exit) must leave the bundle WITHOUT
-    # the marker so drain_runs.sh skips it (§5.2; bundle docstring promise).
+    # CLEANUP ONLY — this trap NEVER writes COMPLETED. The marker is
+    # trainer-attested success: touched IN-PROCESS by the training entrypoint
+    # as its last statement after durable metrics + manifest (§10 item 9).
+    # A shell exit code says nothing about training, so a crashed run must
+    # reach drain unmarked (drain independently validates provenance too).
     local rc=$?
-    if [[ $rc -eq 0 && -d "$RUN_DIR" ]]; then
-        touch "$RUN_DIR/COMPLETED"
+    if (( rc != 0 )); then
+        echo "[template] FAILED rc=${rc} — ${RUN_DIR:-bundle} left WITHOUT COMPLETED" >&2
     fi
 }
 trap cleanup EXIT

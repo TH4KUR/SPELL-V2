@@ -10,11 +10,14 @@ A run directory (bundle) contains EXACTLY:
                               (Phase-4 loss ranking / Oracle-RHO feedstock) plus
                               aggregate + ``dropped_utts`` bookkeeping rows (§3.12);
   ``run_manifest.json``       written by the training script via ``manifest.py``;
-  ``COMPLETED``               touched here ONLY on clean finish (the SLURM template's
-                              EXIT trap also touches it idempotently).
+  ``COMPLETED``               NEVER written here. The marker is TRAINER-ATTESTED
+                              success (single-writer law, PROTOCOL §10 item 9): the
+                              training entrypoint touches it IN-PROCESS as its last
+                              statement after durable metrics — this callback and all
+                              shell traps are cleanup-only. Crash/interrupt ⇒ bundle
+                              reaches ``drain_runs.sh`` unmarked AND unvalidated.
 A hard ≤ ``files_cap`` file assertion runs at construction and every epoch so inode
-discipline violations surface immediately, not at drain time. Any crash leaves the
-bundle WITHOUT ``COMPLETED`` — ``drain_runs.sh`` then skips it by construction.
+discipline violations surface immediately, not at drain time.
 """
 
 from __future__ import annotations
@@ -131,15 +134,10 @@ class BundleCallback(pl.Callback):
             self.rows.extend(leftover)
             self._write_metrics()
         self._assert_file_cap()
-
-        # This hook fires from fit_loop.on_run_end() BEFORE the trainer flips its
-        # status flag to FINISHED (status reads 'TrainerStatus.RUNNING' here on
-        # every clean finish — verified empirically); a crashed run never reaches
-        # this hook at all, and an interrupted one carries STOPPED. Hence the
-        # reliable 'clean finish' signal is simply: NOT explicitly stopped.
-        status = str(getattr(trainer.state, "status", ""))
-        if status.endswith("STOPPED"):
-            print("[bundle] interrupted exit — bundle left WITHOUT COMPLETED marker",
-                  flush=True)
-        else:
-            (self.run_dir / "COMPLETED").touch()
+        # NOTE: this callback does NOT write COMPLETED, under any status. The
+        # single-writer law (PROTOCOL §10 item 9) makes the training entrypoint's
+        # last statement the only sanctioned attestation: fit-loop teardown fires
+        # on_train_end unreliably on exceptions BY DESIGN (no finally around
+        # on_run_end in lightning's _FitLoop.run), so a marker written anywhere on
+        # the Lightning-hook path would re-create exactly the ambiguity that let
+        # crashed bypass bundles pose as good ones.
