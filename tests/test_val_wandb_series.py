@@ -18,6 +18,7 @@ import torch
 from torch.utils.data import DataLoader
 
 import lightning.pytorch as pl
+from lightning.pytorch.callbacks import LearningRateMonitor
 from lightning.pytorch.loggers import Logger
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -29,11 +30,12 @@ from lit_track_b import LitConformerCTC  # noqa: E402
 
 
 class SpyLogger(Logger):
-    """Records every metrics dict reaching the logger boundary."""
+    """Records every metrics/hparams dict reaching the logger boundary."""
 
     def __init__(self):
         super().__init__()
         self.series: list[dict] = []
+        self.hparams: list[dict] = []
 
     @property
     def name(self) -> str:
@@ -43,8 +45,8 @@ class SpyLogger(Logger):
     def version(self) -> str:
         return "v0"
 
-    def log_hyperparams(self, *args, **kwargs):
-        pass
+    def log_hyperparams(self, params, *args, **kwargs):
+        self.hparams.append(dict(params))
 
     def log_metrics(self, metrics, step=None):
         self.series.append(dict(metrics))
@@ -106,6 +108,8 @@ def test_one_epoch_fit_emits_live_val_series(tmp_path):
         enable_progress_bar=False, enable_model_summary=False,
         num_sanity_val_steps=2,                       # exercise sanity suppression
         log_every_n_steps=1,
+        # same assembly as scripts/train_track_b.py (§3.17 logging contract)
+        callbacks=[LearningRateMonitor(logging_interval="step")],
     )
     trainer.fit(lit, train_dl, val_dl)
 
@@ -120,6 +124,18 @@ def test_one_epoch_fit_emits_live_val_series(tmp_path):
     v = wer_points[0]["val/wer"]
     assert isinstance(v, float) and v >= 0.0          # a REAL point, not None/nan
     assert loss_points[0]["val/loss"] > 0.0
+
+    # §3.17 contract surface: the rest of the mandatory series arrives at the
+    # same boundary — step-level train loss and the realized LR schedule (no
+    # LR series exists unless a LearningRateMonitor is actually attached).
+    assert any("train/loss_step" in r for r in spy.series)
+    lr_keys = {k for r in spy.series for k in r if k.lower().startswith("lr")}
+    assert lr_keys, f"no LR series emitted: keys seen={sorted({k for r in spy.series for k in r})}"
+    assert all(float(v) >= 0.0 for r in spy.series
+               for k, v in r.items() if k.lower().startswith("lr"))
+
+    # hyperparameters ride the same logger at fit start:
+    assert len(spy.hparams) == 1 and "cfg" in spy.hparams[0]
 
     # and the trainer-visible metric the run manifest reads at finish:
     assert "val/wer" in trainer.callback_metrics

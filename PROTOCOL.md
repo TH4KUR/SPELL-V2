@@ -87,6 +87,26 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     verification = one-time CPU pytest under the pinned Ada env (full §5.8
     constants incl. constraint/exclude, plus --gres=gpu:0) before pilot
     submission, then both pilots on 2080 Ti nodes only.
+17. **Logging contract (W&B surface)**: every formal run streams a MINIMAL COMPLETE
+    live-series set to its logger and NOTHING ELSE:
+      * `train/loss_step` — step level;
+      * `train/grad_l2` — every `logging.grad_norm_log_every_batches` steps;
+      * an `lr*` series via `LearningRateMonitor(logging_interval="step")` in
+        `scripts/train_track_b.py` — the realized warmup+decay schedule (§3.15);
+      * `val/loss`, `val/wer`, `val/cer` — exactly once per validation epoch,
+        emitted ONLY by the module's own epoch-end hook from module-owned
+        aggregates (ownership split, §10 item 8);
+      * hyperparameters — automatic at fit start via `save_hyperparameters(cfg…)`.
+    Per-utterance data NEVER streams to W&B; it lives only in `metrics.parquet`
+    (the bundle feed). Series NAMES are FROZEN: gate logic reads exactly these
+    names (`val/wer` is THE §7 gate signal). Rules going forward:
+      (a) any NEW logged series must be pinned by a logger-boundary assertion in
+      `tests/test_val_wandb_series.py` BEFORE a run may depend on it;
+      (b) renaming or deleting one requires a PROTOCOL revision note here;
+      (c) any change touching trainer/callback/logger assembly triggers a
+      FIRST-EPOCH check that each expected series exists on W&B before the rest
+      of a long run is trusted — a silent miss voids gates discovered weeks late
+      (2026-08-27 incident).
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 

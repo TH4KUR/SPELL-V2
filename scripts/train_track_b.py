@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import lightning.pytorch as pl                      # noqa: E402
+from lightning.pytorch.callbacks import LearningRateMonitor   # noqa: E402
 from lightning.pytorch.loggers import WandbLogger   # noqa: E402
 
 from ckpt_bundle import BundleCallback              # noqa: E402
@@ -201,7 +202,10 @@ def run_training(*, args, cfg, train_recs, val_recs, vocab, train_seed,
         # instead of aborting after a full seeding-consistent setup.
         deterministic="warn_only",
         gradient_clip_val=float(tcfg.get("grad_clip_norm", 1.0)),
-        callbacks=[bundle],
+        # §3.17 logging contract: LR monitor streams the realized schedule
+        # (warmup+decay, §3.15 ABSOLUTE constants) as a live series — without
+        # it lightning never logs learning_rate even with save_hyperparameters.
+        callbacks=[bundle, LearningRateMonitor(logging_interval="step")],
         logger=logger,
         log_every_n_steps=50,
         enable_checkpointing=False,                  # BundleCallback owns all files
