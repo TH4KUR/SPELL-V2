@@ -77,12 +77,15 @@ def _mkbundle(runs: Path, rid: str, *, mode: str = "healthy") -> Path:
     return b
 
 
-def _drain(*args: str, expect_timeout: int = 300) -> subprocess.CompletedProcess:
+def _drain(*args: str, expect_timeout: int = 300,
+           env_extra: dict | None = None) -> subprocess.CompletedProcess:
     """Run the production drainer hermetically: tmp archive + runs-dir,
-    PYTHON_BIN pinned to this interpreter."""
+    PYTHON_BIN pinned to this interpreter (overridable via ``env_extra``)."""
     env = os.environ.copy()
     env.pop("SPELL_ARCHIVE_ROOT", None)                 # defensive vs exported var
     env["PYTHON_BIN"] = sys.executable
+    if env_extra:
+        env.update(env_extra)
     return subprocess.run(["bash", str(DRAIN), *args],
                           capture_output=True, text=True,
                           env=env, timeout=expect_timeout)
@@ -242,3 +245,39 @@ def test_nonexistent_archive_is_loud_error(layout):
 
     assert proc.returncode == 1
     assert "not reachable" in proc.stderr
+
+
+# ------------------------------------------------- probe-env laws (2026-08-27) --
+
+def test_non_python3_interpreter_refused_at_gate(layout):
+    """Ada login shells: bare `python` = CentOS-7 Python 2.7 — it cannot parse
+    the probe (f-strings), which is exactly how the 2026-08-27 --verify-only
+    attempt died. Non-python3 PYTHON_BIN must fail LOUDLY at startup, before
+    any bundle is even considered."""
+    _, archive, runs = layout
+    _mkbundle(runs, "track_b/x", mode="healthy")
+
+    proc = _drain("--archive", str(archive), "--runs-dir", str(runs),
+                  env_extra={"PYTHON_BIN": "/bin/false"})   # exits 1 on -c probe
+
+    assert proc.returncode == 1
+    assert "not a python3 interpreter" in proc.stderr
+    assert "FROZEN" in proc.stderr                           # remedy is named
+    assert (runs / "track_b/x").is_dir()                     # nothing considered
+
+
+def test_crashed_probe_never_validates(layout):
+    """THE hole this incident exposed: a probe that dies with empty stdout
+    (python2 SyntaxError, missing interpreter, crash) used to fall through to
+    VALIDATE ok — silent provenance bypass. Empty/no verdict ⇒ refusal."""
+    _, archive, runs = layout
+    _mkbundle(runs, "track_b/x", mode="healthy")
+
+    proc = _drain("--archive", str(archive), "--runs-dir", str(runs),
+                  env_extra={"PYTHON_BIN": "/bin/true"})    # passes gate (rc 0),
+                                                            # yields NO verdict
+    assert proc.returncode != 0
+    assert "REFUSE track_b/x" in proc.stderr
+    assert "no verdict" in proc.stderr
+    assert "VALIDATE ok" not in proc.stdout
+    assert (runs / "track_b/x").is_dir()

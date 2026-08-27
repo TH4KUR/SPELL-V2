@@ -30,7 +30,10 @@
 #                         [-n|--dry-run] [--verify-only] [RUN_ID...]
 #     RUN_ID omitted -> validate+drain every marker discovered at bundle depth.
 #   --verify-only : validate everything, move NOTHING (gates archiving).
-#   PYTHON_BIN    : python used for probes (default "python"; tests override).
+#   PYTHON_BIN    : probe interpreter; default $HOME/envs/spell/bin/python
+#                   (FROZEN §5.0). NEVER bare "python": Ada login shells are
+#                   CentOS 7 → /usr/bin/python is 2.7 and cannot even parse
+#                   the probe (2026-08-27 incident).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -49,6 +52,17 @@ while [[ $# -gt 0 ]]; do
         *) IDS+=("$1"); shift;;
     esac
 done
+
+# Probe interpreter anchors the FROZEN env (§5.0). Bare `python` on Ada login
+# shells is CentOS-7 Python 2.7 — it cannot parse the probe, and a probe that
+# cannot run must never pass for a verdict (refusal, below).
+PYTHON_BIN="${PYTHON_BIN:-$HOME/envs/spell/bin/python}"
+if ! "$PYTHON_BIN" -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' 2>/dev/null; then
+    echo "drain: PYTHON_BIN='$PYTHON_BIN' is not a python3 interpreter." >&2
+    echo "       Default is ~/envs/spell/bin/python (FROZEN §5.0); bare 'python'" >&2
+    echo "       on Ada login shells is CentOS-7 Python 2.7 — do not use it." >&2
+    exit 1
+fi
 
 if [[ ! -d "$ARCHIVE" ]]; then
     echo "drain: archive $ARCHIVE not reachable from this node." >&2
@@ -70,8 +84,6 @@ if [[ ${#IDS[@]} -eq 0 ]]; then
     fi
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-python}"
-
 # check_bundle_content <bundle_dir>: stdout == "content-ok ..." iff checks
 # 2..4 hold; otherwise prints the failing-check reason. Communicates validity
 # through the FIRST WORD so callers never parse free-form prose.
@@ -80,11 +92,19 @@ check_bundle_content() {
     [[ -f "$src/metrics.parquet" ]] || { echo "FAIL metrics.parquet missing"; return 0; }
     BUNDLE_DIR="$src" "$PYTHON_BIN" - <<'PYEOF'
 import json, os, sys
+try:
+    import pandas as pd
+    import torch
+except Exception as exc:                                   # noqa: BLE001
+    # a python3 without the frozen env's libs must fail NAMED, not as a
+    # misleading "unreadable" content verdict
+    print(f"FAIL probe env broken ({exc}) — PYTHON_BIN="
+          f"'{os.environ.get('PYTHON_BIN', '')}' lacks pandas/torch")
+    raise SystemExit(0)
 
 src = os.environ["BUNDLE_DIR"]
 reason = ""
 try:
-    import pandas as pd
     df = pd.read_parquet(os.path.join(src, "metrics.parquet"))
     counts = {s: int((df["split"] == s).sum()) for s in ("train", "val")}
     if min(counts.values()) < 1:
@@ -94,7 +114,6 @@ except Exception as exc:                                   # noqa: BLE001
     reason = f"metrics.parquet unreadable: {exc}"
 if not reason:
     try:
-        import torch
         torch.load(os.path.join(src, "last.ckpt"), map_location="cpu",
                    weights_only=True)
     except FileNotFoundError:
@@ -136,8 +155,16 @@ for run_id in "${IDS[@]}"; do
         fi
     fi
     if [[ -z "$reason" ]]; then
-        content=$(check_bundle_content "$src")
-        [[ "$content" == "content-ok"* ]] || reason="${content#FAIL }"
+        # A probe that cannot run (broken env, python2 parse failure, crash)
+        # yields EMPTY stdout — that is a REFUSAL, never a silent pass.
+        content=$(check_bundle_content "$src") || content=""
+        if [[ "$content" == "content-ok"* ]]; then
+            :
+        else
+            reason="${content#FAIL }"
+            [[ -n "$reason" ]] || \
+                reason="content probe produced no verdict (crashed? see stderr above)"
+        fi
     fi
 
     if [[ -n "$reason" ]]; then

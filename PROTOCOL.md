@@ -149,7 +149,10 @@ laptop filesystem.
    `scripts/drain_runs.sh` independently validates content-provenance (marker +
    metrics for both splits + loadable last.ckpt + manifest keys; refusals name
    the failed check, `--verify-only` gates archiving) and moves validated
-   bundles to `/share1/$USER/spell/runs/` from a mounted node. Direct writes outside $HOME are rejected by policy everywhere
+   bundles to `/share1/$USER/spell/runs/` from a mounted node. Drainer probes
+   run under the FROZEN env python (`~/envs/spell/bin/python`, §5.0) — bare
+   `python` on Ada login shells is CentOS-7 2.7 and cannot parse them; a probe
+   that cannot run NEVER validates (empty verdict ⇒ refusal). Direct writes outside $HOME are rejected by policy everywhere
    (`archive_mode != "relay"` raises).
 3. **$HOME gates before every launch**: usage warn ≥20 GB, abort ≥23 GB;
    inode warn at 240k. `scripts/check_storage.py --strict` runs at job start in the
@@ -365,3 +368,8 @@ hardware drift guard. Earlier wording remains in git history.
    `--verify-only` mode — auto-discovery depth was also silently wrong
    (mindepth/maxdepth 2 can never see `<runs>/<track>/<id>/`) and is pinned
    exact. Archiving of Pilot A's bundle clears only via `--verify-only`.
+   Probe-env corollary (same day): the drainer defaulted to bare `python`,
+   which on Ada login shells is CentOS-7 Python 2.7 — the probe died at parse
+   time, and an empty probe verdict used to fall through as VALIDATE. Fixed
+   both: PYTHON_BIN anchors the frozen env + startup gate refuses non-python3;
+   empty verdict ⇒ named refusal, pinned by tests.
