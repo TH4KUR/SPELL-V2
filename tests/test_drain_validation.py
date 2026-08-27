@@ -250,10 +250,11 @@ def test_nonexistent_archive_is_loud_error(layout):
 # ------------------------------------------------- probe-env laws (2026-08-27) --
 
 def test_non_python3_interpreter_refused_at_gate(layout):
-    """Ada login shells: bare `python` = CentOS-7 Python 2.7 — it cannot parse
-    the probe (f-strings), which is exactly how the 2026-08-27 --verify-only
-    attempt died. Non-python3 PYTHON_BIN must fail LOUDLY at startup, before
-    any bundle is even considered."""
+    """Unusable interpreters (python2, broken venv symlink, missing base
+    interpreter) must fail LOUDLY at startup — with the REAL interpreter error
+    shown and a remedy named — before any bundle is even considered. This is
+    the 2026-08-27 lesson x2: first bare `python` (py2 parse death), then the
+    frozen venv python refusing to start without its module on login shells."""
     _, archive, runs = layout
     _mkbundle(runs, "track_b/x", mode="healthy")
 
@@ -261,9 +262,21 @@ def test_non_python3_interpreter_refused_at_gate(layout):
                   env_extra={"PYTHON_BIN": "/bin/false"})   # exits 1 on -c probe
 
     assert proc.returncode == 1
-    assert "not a python3 interpreter" in proc.stderr
-    assert "FROZEN" in proc.stderr                           # remedy is named
+    assert "not a usable python3" in proc.stderr
+    assert "remedy A: module load u22/python/3.12.4" in proc.stderr
+    assert "PYTHON_BIN=" in proc.stderr                      # remedy B is named
     assert (runs / "track_b/x").is_dir()                     # nothing considered
+
+
+def test_missing_interpreter_named_not_generic(layout):
+    _, archive, runs = layout
+    _mkbundle(runs, "track_b/x", mode="healthy")
+
+    proc = _drain("--archive", str(archive), "--runs-dir", str(runs),
+                  env_extra={"PYTHON_BIN": str(runs / "no-such-python")})
+
+    assert proc.returncode == 1
+    assert "does not exist on this node" in proc.stderr
 
 
 def test_crashed_probe_never_validates(layout):

@@ -31,9 +31,10 @@
 #     RUN_ID omitted -> validate+drain every marker discovered at bundle depth.
 #   --verify-only : validate everything, move NOTHING (gates archiving).
 #   PYTHON_BIN    : probe interpreter; default $HOME/envs/spell/bin/python
-#                   (FROZEN §5.0). NEVER bare "python": Ada login shells are
-#                   CentOS 7 → /usr/bin/python is 2.7 and cannot even parse
-#                   the probe (2026-08-27 incident).
+#                   (FROZEN §5.0/§5.5). NEVER bare "python": Ada login shells
+#                   are CentOS 7 → /usr/bin/python is 2.7 (2026-08-27 incident).
+#                   If the venv python won't start on a login shell, its module
+#                   is unloaded: `module load u22/python/3.12.4` then rerun.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -53,15 +54,33 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Probe interpreter anchors the FROZEN env (§5.0). Bare `python` on Ada login
-# shells is CentOS-7 Python 2.7 — it cannot parse the probe, and a probe that
-# cannot run must never pass for a verdict (refusal, below).
+# Probe interpreter anchors the FROZEN env (§5.0/§5.5): ~/envs/spell is a venv
+# built ON module u22/python/3.12.4 — its bin/python symlinks to the module's
+# interpreter, which does not start on shells without the module loaded (this
+# is why template.sbatch module-loads BEFORE activating). Mirror that recipe:
+# try direct, then module load, then refuse LOUDLY with the real error.
 PYTHON_BIN="${PYTHON_BIN:-$HOME/envs/spell/bin/python}"
-if ! "$PYTHON_BIN" -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' 2>/dev/null; then
-    echo "drain: PYTHON_BIN='$PYTHON_BIN' is not a python3 interpreter." >&2
-    echo "       Default is ~/envs/spell/bin/python (FROZEN §5.0); bare 'python'" >&2
-    echo "       on Ada login shells is CentOS-7 Python 2.7 — do not use it." >&2
+_py3_ok() { "$1" -c 'import sys; assert sys.version_info[0] >= 3' 2>/dev/null; }
+
+if [[ ! -e "$PYTHON_BIN" ]]; then
+    echo "drain: PYTHON_BIN='$PYTHON_BIN' does not exist on this node." >&2
+    echo "       (Frozen env lives in \$HOME/envs/spell; if absent, setup_env" >&2
+    echo "       (§5.5) has not run yet.)" >&2
     exit 1
+fi
+if ! _py3_ok "$PYTHON_BIN"; then
+    if command -v module >/dev/null 2>&1 \
+       && module load u22/python/3.12.4 >/dev/null 2>&1 \
+       && _py3_ok "$PYTHON_BIN"; then
+        echo "drain: loaded module u22/python/3.12.4 — frozen venv python usable here."
+    else
+        echo "drain: PYTHON_BIN='$PYTHON_BIN' is not a usable python3 on this node." >&2
+        echo "       resolves to: $(readlink -f "$PYTHON_BIN" 2>/dev/null || echo '?')" >&2
+        "$PYTHON_BIN" -V 2>&1 | sed 's/^/       interpreter says: /' >&2 || true
+        echo "       remedy A: module load u22/python/3.12.4   # in THIS shell, then rerun" >&2
+        echo "       remedy B: PYTHON_BIN=/path/to/python3 bash scripts/drain_runs.sh ..." >&2
+        exit 1
+    fi
 fi
 
 if [[ ! -d "$ARCHIVE" ]]; then
