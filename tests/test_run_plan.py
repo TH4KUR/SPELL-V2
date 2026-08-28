@@ -58,16 +58,23 @@ def test_committed_plans_exist_and_parse():
         assert len(set(ids)) == len(ids)
 
 
-def test_pilot_plan_ids_cover_array_range_0_to_2():
+def test_pilot_plan_ids_cover_array_range_0_to_5():
+    """Tasks 0-5: ceiling (task 0) + the FORMAL x5 random-floor cell (§3.8),
+    seeds 101-105 — every floor on the SAME config as the pilot floors."""
     rows = grp.parse_plan(PROJECT_ROOT / "slurm" / "run_plan_pilots.tsv")
     ids = [int(r[0]) for r in rows]
-    assert ids == list(range(min(ids), max(ids) + 1))          # contiguous
-    assert min(ids) == 0                                       # ceiling is task 0
+    assert ids == list(range(0, 6))                            # contiguous 0..5
     ceiling = next(r for r in rows if int(r[0]) == 0)
     assert ceiling[2] == "subsets/splits/train_ids.txt"        # FROZEN identity
     assert ceiling[4] == "configs/pilot_100pct.yaml"
     floors = [r for r in rows if int(r[0]) != 0]
-    assert {r[3] for r in floors} == {"101", "102"}            # subset seeds ARE identity
+    assert {r[3] for r in floors} == {"101", "102", "103", "104", "105"}
+    assert {r[4] for r in floors} == {"configs/pilot_25pct_random_x2seeds.yaml"}
+    assert {r[1] for r in floors} == {"track_b"}               # floors are Track B
+    # every floor manifest is a distinct identity, 1:1 with its seed
+    assert len({r[2] for r in floors}) == 5
+    for r in floors:
+        assert r[2] == f"subsets/random_25pct_seed{r[3]}.txt"
 
 
 def test_committed_plans_match_sanctioned_generator_byte_for_byte():

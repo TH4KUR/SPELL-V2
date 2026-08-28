@@ -38,7 +38,8 @@ BANNER = (
     "# The reader matches COLUMN-1 == SLURM_ARRAY_TASK_ID (scripts/plan_reader.awk);",
     "# line positions are meaningless by design.",
     "# Sequence discipline (PROTOCOL §7 gate): task 0 (ceiling) runs FIRST and ALONE;",
-    "# 'val WER decreasing by epoch ~5' UNLOCKS tasks 1-2 (25% random floors).",
+    "# 'val WER decreasing by epoch ~5' UNLOCKS tasks 1-5 (25% random floors, the",
+    "# formal x5 random-floor cell per §3.8 — seeds 101-105, same config).",
 )
 
 
@@ -49,6 +50,10 @@ class PlanError(ValueError):
 # --- known plans -------------------------------------------------------------
 # Frozen identities preserved verbatim from the pre-schema-v2 file (same
 # manifest / seed / config / keep values); only the leading task id is new.
+# Tasks 3-5 (2026-08-28) complete the formal x5 random-floor cell (§3.8):
+# seeds 103-105, same config as the pilot floors, keep_local_traj=1. The
+# yaml filename says x2seeds for historical reasons — the CONFIG is the one
+# frozen artifact and is shared by all five floor tasks.
 PLANS: dict[str, list[tuple]] = {
     "slurm/run_plan_pilots.tsv": [
         (0, "track_b", "subsets/splits/train_ids.txt", 0,
@@ -56,6 +61,12 @@ PLANS: dict[str, list[tuple]] = {
         (1, "track_b", "subsets/random_25pct_seed101.txt", 101,
          "configs/pilot_25pct_random_x2seeds.yaml", 1),
         (2, "track_b", "subsets/random_25pct_seed102.txt", 102,
+         "configs/pilot_25pct_random_x2seeds.yaml", 1),
+        (3, "track_b", "subsets/random_25pct_seed103.txt", 103,
+         "configs/pilot_25pct_random_x2seeds.yaml", 1),
+        (4, "track_b", "subsets/random_25pct_seed104.txt", 104,
+         "configs/pilot_25pct_random_x2seeds.yaml", 1),
+        (5, "track_b", "subsets/random_25pct_seed105.txt", 105,
          "configs/pilot_25pct_random_x2seeds.yaml", 1),
     ],
 }

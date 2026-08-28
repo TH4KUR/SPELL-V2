@@ -52,14 +52,21 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
 7. Per-sample losses logged every epoch; batch-level grad L2 norms logged (∇G and ∇D for
    Track A); checkpoints every 5 epochs (feeds LESS trajectory analysis).
 8. Seeds: random floors ×5 seeds; every other condition ×3 seeds; matched across tracks.
+   The formal x5 random-floor cell = pilot floors (101, 102) + seeds 103–105
+   (run-plan tasks 1–5, drawn 2026-08-28 via `scripts/make_random_subset.py`). The
+   two-seed spread measured on 101/102 (0.0054 WER) is a PROVISIONAL dispersion
+   estimate only; the final σ for the random-floor condition is computed on n=5.
 9. Selection NEVER happens inside training code: trainers consume a manifest path from
    `subsets/`.
 10. Deterministic data ordering per seed; identical eval batches/crops across all runs
     of a track.
-11. **Seeds are two distinct things**: the `subset_seed` (e.g. 101/102) draws a random
-    manifest and is part of that subset's IDENTITY (`subsets/random_25pct_seed{101,102}.txt`);
+11. **Seeds are two distinct things**: the `subset_seed` (e.g. 101–105) draws a random
+    manifest and is part of that subset's IDENTITY (`subsets/random_25pct_seed{101..105}.txt`);
     the `train_seed` is a FIXED constant shared by every run. Track A anchors consume
-    `subsets/random_25pct_seed{101,102}.txt` unchanged.
+    `subsets/random_25pct_seed{101..105}.txt` unchanged. AMORTIZATION LAW: the x5
+    expansion (2026-08-28) drew ALL five floor manifests up front precisely so both
+    tracks share the same identities — no re-draws, ever; a re-drawn manifest would
+    silently change the condition under test.
 12. **CTC input-length rule**: utterances whose token length is shorter than their
     normalized-text id length cannot produce valid CTC targets — they are dropped from
     training/validation batches and the drop count is logged loudly in metrics.

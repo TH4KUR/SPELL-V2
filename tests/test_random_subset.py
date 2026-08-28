@@ -1,7 +1,9 @@
 """Random-subset manifests: budget arithmetic, draw determinism, seed separation,
-and byte-level integrity of the COMMITTED frozen identities (seeds 101/102)
-against an independent regeneration through scripts/make_random_subset.sample_ids."""
+and byte-level integrity of the COMMITTED frozen identities (the x5 random-floor
+cell, seeds 101–105) against an independent regeneration through
+scripts/make_random_subset.sample_ids."""
 
+import itertools
 import json
 import sys
 from pathlib import Path
@@ -75,7 +77,7 @@ def _manifest_paths(seed: int):
     return stem.with_suffix(".txt"), stem.with_suffix(".json")
 
 
-@pytest.mark.parametrize("seed", [101, 102])
+@pytest.mark.parametrize("seed", [101, 102, 103, 104, 105])
 def test_committed_manifests_match_regeneration_byte_for_byte(seed, train_ids_sorted):
     txt_path, json_path = _manifest_paths(seed)
     committed_lines = txt_path.read_text(encoding="utf-8").splitlines()
@@ -86,7 +88,7 @@ def test_committed_manifests_match_regeneration_byte_for_byte(seed, train_ids_so
     assert committed_lines == chosen                       # and identical membership/order
 
 
-@pytest.mark.parametrize("seed", [101, 102])
+@pytest.mark.parametrize("seed", [101, 102, 103, 104, 105])
 def test_committed_manifests_respect_split_laws(seed):
     val_ids = load_id_list(SUBSETS_DIR / "splits" / "val_ids.txt")
     manifest = set(load_id_list(_manifest_paths(seed)[0]))
@@ -94,7 +96,7 @@ def test_committed_manifests_respect_split_laws(seed):
     assert manifest.isdisjoint(val_ids)                    # val NEVER sampled (§2.5)
 
 
-@pytest.mark.parametrize("seed", [101, 102])
+@pytest.mark.parametrize("seed", [101, 102, 103, 104, 105])
 def test_characterization_json_consistent(seed, train_ids_sorted):
     _, json_path = _manifest_paths(seed)
     char = json.loads(json_path.read_text(encoding="utf-8"))
@@ -119,9 +121,10 @@ def test_characterization_json_consistent(seed, train_ids_sorted):
     assert 5.0 < char["realized_hours"] < 11.0
 
 
-def test_two_floors_are_distinct_identities():
-    a = load_id_list(_manifest_paths(101)[0])
-    b = load_id_list(_manifest_paths(102)[0])
+@pytest.mark.parametrize("s1,s2", list(itertools.combinations([101, 102, 103, 104, 105], 2)))
+def test_floor_pairs_are_distinct_identities(s1, s2):
+    a = load_id_list(_manifest_paths(s1)[0])
+    b = load_id_list(_manifest_paths(s2)[0])
     assert a != b
     # independent hypergeometric draws of k from N=29,064 share ≈ k²/N ≈ 2076 by
     # pure chance — far below k, so neither floor embeds or implies the other
