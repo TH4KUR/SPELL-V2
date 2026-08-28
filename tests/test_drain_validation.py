@@ -80,10 +80,13 @@ def _mkbundle(runs: Path, rid: str, *, mode: str = "healthy") -> Path:
 def _drain(*args: str, expect_timeout: int = 300,
            env_extra: dict | None = None) -> subprocess.CompletedProcess:
     """Run the production drainer hermetically: tmp archive + runs-dir,
-    PYTHON_BIN pinned to this interpreter (overridable via ``env_extra``)."""
+    PYTHON_BIN pinned to this interpreter (overridable via ``env_extra``).
+    SPELL_PROBE=local is pinned so suites never depend on a slurm client;
+    srun-transport suites below opt back in explicitly."""
     env = os.environ.copy()
     env.pop("SPELL_ARCHIVE_ROOT", None)                 # defensive vs exported var
     env["PYTHON_BIN"] = sys.executable
+    env["SPELL_PROBE"] = "local"
     if env_extra:
         env.update(env_extra)
     return subprocess.run(["bash", str(DRAIN), *args],
@@ -279,6 +282,125 @@ def test_missing_interpreter_named_not_generic(layout):
     assert "does not exist on this node" in proc.stderr
 
 
+# ------------------------------------------------------- srun-transport laws --
+#
+# 2026-08-28: /usr/local/apps/python-3.12.4 (the frozen venv's base) is mounted
+# ONLY on compute nodes — module load succeeds on the Ada login node but
+# exposes no python. Content checks therefore run as ONE CPU srun job (full
+# §5.8 string) executing scripts/drain_probe.py under the frozen venv. These
+# suites drive that transport end-to-end through an srun SHIM (executes the
+# bash -lc payload locally) — the laptop cannot submit real slurm jobs, but
+# payload assembly, verdict parsing, and failure handling all run for real.
+
+def _mk_srun_shim(tmp_path: Path, behaviour: str = "exec") -> Path:
+    """A fake `srun` on PATH: skips the scheduling flags, finds the inner
+    `bash -lc <payload>` and runs it HERE — proving the payload is complete
+    and correct without a cluster."""
+    shim = tmp_path / "srun-shim"
+    shim.mkdir(exist_ok=True)
+    exe = shim / "srun"
+    if behaviour == "exec":
+        body = (
+            '#!/bin/bash\n'
+            'args=("$@")\n'
+            'for i in "${!args[@]}"; do\n'
+            '    if [[ "${args[$i]}" == "-lc" ]]; then\n'
+            '        exec bash -lc "${args[$((i+1))]}"\n'
+            '    fi\n'
+            'done\n'
+            'echo "shim: no bash -lc payload found" >&2\n'
+            'exit 99\n'
+        )
+    elif behaviour == "fail":
+        body = '#!/bin/bash\necho "srun: error: shimmed allocation failure" >&2\nexit 7\n'
+    else:                                                   # junk: rc 0, no verdicts
+        body = '#!/bin/bash\necho "hello from a noisy batch system"\nexit 0\n'
+    exe.write_text(body)
+    exe.chmod(0o755)
+    return shim
+
+
+def _srun_env(shim_dir: Path) -> dict:
+    return {
+        "PATH": f"{shim_dir}:{os.environ['PATH']}",
+        "SPELL_PROBE": "srun",
+        "PYTHON_BIN": sys.executable,       # exported through the payload
+    }
+
+
+def test_srun_payload_carries_full_scheduling_string_and_module_recipe():
+    """§5.8 law, static pin: the srun probe job must carry the FROZEN
+    scheduling string in full and the module->venv recipe that makes the
+    compute-node interpreter usable."""
+    body = DRAIN.read_text(encoding="utf-8")
+    for token in ("-p u22", "-A research", "--qos=medium",
+                  "--constraint=2080ti", "--exclude=gnode066",
+                  "--gres=gpu:0", "module load u22/python/3.12.4",
+                  "drain_probe.py", "envs/spell/bin/python"):
+        assert token in body, f"drainer lost §5.8/recipe token: {token!r}"
+
+
+def test_srun_transport_end_to_end_via_shim(layout):
+    """Verdicts flow through the srun payload: healthy validates, defective is
+    refused BY NAME — proving probe transport, not just the local path."""
+    _, archive, runs = layout
+    _mkbundle(runs, "track_b/good", mode="healthy")
+    _mkbundle(runs, "track_b/nok", mode="no_ckpt")
+
+    proc = _drain("--archive", str(archive), "--runs-dir", str(runs),
+                  "--verify-only",
+                  env_extra=_srun_env(_mk_srun_shim(layout[0])))
+
+    assert proc.returncode != 0
+    assert "VALIDATE ok track_b/good" in proc.stdout, proc.stderr
+    assert "REFUSE track_b/nok" in proc.stderr, proc.stderr
+    assert "last.ckpt missing" in proc.stderr
+
+
+@pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync unavailable")
+def test_srun_transport_drains_for_real_via_shim(layout):
+    _, archive, runs = layout
+    _mkbundle(runs, "track_b/good", mode="healthy")
+
+    proc = _drain("--archive", str(archive), "--runs-dir", str(runs),
+                  env_extra=_srun_env(_mk_srun_shim(layout[0])))
+
+    assert proc.returncode == 0, proc.stderr
+    assert "drain: OK track_b/good ->" in proc.stdout
+    assert not (runs / "track_b/good").exists()
+    assert (archive / "track_b/good" / "metrics.parquet").is_file()
+
+
+def test_failed_srun_job_refuses_everything_loudly(layout):
+    """A dead allocation must never look like valid bundles: srun rc!=0 with
+    no verdicts => every candidate REFUSED, named as a probe-job failure."""
+    _, archive, runs = layout
+    _mkbundle(runs, "track_b/x", mode="healthy")
+
+    proc = _drain("--archive", str(archive), "--runs-dir", str(runs),
+                  env_extra=_srun_env(_mk_srun_shim(layout[0], "fail")))
+
+    assert proc.returncode != 0
+    assert "REFUSE track_b/x" in proc.stderr
+    assert "probe job failed (rc=7)" in proc.stderr
+    assert (runs / "track_b/x").is_dir()
+
+
+def test_noisy_srun_output_counts_as_protocol_violation(layout):
+    """Junk on the probe's stdout (batch-system banners, profile noise) may
+    never be mistaken for verdicts: missing verdict lines => refusal."""
+    _, archive, runs = layout
+    _mkbundle(runs, "track_b/x", mode="healthy")
+
+    proc = _drain("--archive", str(archive), "--runs-dir", str(runs),
+                  env_extra=_srun_env(_mk_srun_shim(layout[0], "junk")))
+
+    assert proc.returncode != 0
+    assert "REFUSE track_b/x" in proc.stderr
+    assert "probe protocol violation" in proc.stderr
+    assert (runs / "track_b/x").is_dir()
+
+
 def test_crashed_probe_never_validates(layout):
     """THE hole this incident exposed: a probe that dies with empty stdout
     (python2 SyntaxError, missing interpreter, crash) used to fall through to
@@ -291,6 +413,6 @@ def test_crashed_probe_never_validates(layout):
                                                             # yields NO verdict
     assert proc.returncode != 0
     assert "REFUSE track_b/x" in proc.stderr
-    assert "no verdict" in proc.stderr
+    assert "probe protocol violation" in proc.stderr
     assert "VALIDATE ok" not in proc.stdout
     assert (runs / "track_b/x").is_dir()
