@@ -10,6 +10,12 @@ P808 branch (the frozen env carries no librosa). Scores the TRAIN pool only
 (§5 item 12: val rows never leave the scoring job). Output is a sorted,
 keyed parquet committed from the Ada clone per §5 item 12.
 
+Inference runs on `dnsmos_model.DNSMOSTorch` (models/dnsmos/sig_bak_ovr_torch.pt),
+a pure-PyTorch port of the vendored ONNX graph — NOT onnxruntime, whose
+compiled bindings are confirmed incompatible with this project's numpy>=2.0
+pin (2026-09-09; see models/dnsmos/PROVENANCE.md). Verified bit-equivalent
+to the ONNX graph (<1e-6 max abs diff) by scripts/port_dnsmos_to_torch.py.
+
 Selection key = calibrated ``ovr_mos`` (descending); calibration is monotone
 on any plausible range, so the ranking is invariant to the raw-scale ambiguity
 (whose empirical min/max this job prints into the run log for provenance).
@@ -27,15 +33,16 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import soundfile as sf  # noqa: E402
+import torch  # noqa: E402
 
 import paths as data_paths  # noqa: E402
 from config import load_paths  # noqa: E402
 from dataset import load_id_list, load_records  # noqa: E402
+from dnsmos_model import LEN_SAMPLES, load_dnsmos_torch  # noqa: E402
 
 FS = 16000
 INPUT_LENGTH = 9.01
-LEN_SAMPLES = int(INPUT_LENGTH * FS)                  # 144,160
+assert LEN_SAMPLES == int(INPUT_LENGTH * FS)          # 144,160 — single source of truth
 POLY_COEF = {                                          # non-personalized, verbatim
     "sig": [-0.08397278, 1.22083953, 0.0052439],
     "bak": [-0.13166888, 1.60915514, -0.39604546],
@@ -49,10 +56,7 @@ _SESSION = None
 
 
 def load_session(model_path: str | Path):
-    import onnxruntime as ort                          # frozen-env dependency (§5.5)
-
-    return ort.InferenceSession(str(model_path),
-                                providers=["CPUExecutionProvider"])
+    return load_dnsmos_torch(model_path)
 
 
 def calibrate(values, channel: str) -> np.ndarray:
@@ -60,7 +64,10 @@ def calibrate(values, channel: str) -> np.ndarray:
 
 
 def score_audio(audio: np.ndarray, session, fs: int = FS) -> dict:
-    """One utterance → the §5 item 12 row (means over hops, per-hop calibration)."""
+    """One utterance → the §5 item 12 row (means over hops, per-hop calibration).
+
+    ``session`` is a ``dnsmos_model.DNSMOSTorch`` in eval mode (the name is
+    kept from the onnxruntime-session era for a minimal diff)."""
     if fs != FS:
         raise ValueError(
             f"refusing {fs} Hz audio — staged layout guarantees 16 kHz mono "
@@ -74,8 +81,9 @@ def score_audio(audio: np.ndarray, session, fs: int = FS) -> dict:
         seg = audio[int(idx * fs): int((idx + INPUT_LENGTH) * fs)]
         if len(seg) < LEN_SAMPLES:
             continue
-        feed = {"input_1": seg.astype(np.float32)[np.newaxis, :]}
-        mos_sig_raw, mos_bak_raw, mos_ovr_raw = session.run(None, feed)[0][0]
+        feed = torch.from_numpy(seg.astype(np.float32)[np.newaxis, :])
+        with torch.no_grad():
+            mos_sig_raw, mos_bak_raw, mos_ovr_raw = session(feed)[0].numpy()
         sig_r.append(float(mos_sig_raw))
         bak_r.append(float(mos_bak_raw))
         ovr_r.append(float(mos_ovr_raw))
@@ -147,7 +155,8 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     root = Path(__file__).resolve().parents[1]
     ap.add_argument("--out", type=Path, default=root / "scores" / "dnsmos_scores.parquet")
-    ap.add_argument("--model", type=Path, default=root / "models" / "dnsmos" / "sig_bak_ovr.onnx")
+    ap.add_argument("--model", type=Path,
+                    default=root / "models" / "dnsmos" / "sig_bak_ovr_torch.pt")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int, default=None,
                     help="smoke: score only the first N utterances")

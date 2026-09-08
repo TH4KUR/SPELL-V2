@@ -41,13 +41,15 @@ def test_numpy_stays_v2_for_scipy_lightning_compat():
         "score_proxy.py on Ada (2026-09-09, job 2691962)")
 
 
-def test_setup_env_installs_onnxruntime_via_no_deps():
-    """onnxruntime==1.18.1 declares numpy<2.0 -- pip's resolver REFUSES it
-    alongside numpy==2.5.2/scipy==1.18.1 in one `pip install -r` (2026-09-09:
-    the exact conflict pip reported after the numpy revert). setup_env.sbatch
-    must install onnxruntime SEPARATELY with --no-deps so its stale upper
-    pin never enters the same solve as the rest of the lock."""
-    text = (PROJECT_ROOT / "scripts" / "setup_env.sbatch").read_text()
-    assert "--no-deps" in text and "onnxruntime" in text, (
-        "setup_env.sbatch must install onnxruntime via a separate --no-deps "
-        "step, never folded into the main `pip install -r requirements.lock`")
+def test_onnxruntime_never_reenters_the_lock():
+    """onnxruntime==1.18.1 declares numpy<2.0 -- irreconcilable with
+    numpy==2.5.2/scipy==1.18.1 in one `pip install -r` (2026-09-09). Resolved
+    by dropping onnxruntime entirely: score_dnsmos.py now runs
+    dnsmos_model.DNSMOSTorch, a verified pure-PyTorch port of the vendored
+    ONNX graph (scripts/port_dnsmos_to_torch.py). A future hand-install
+    re-adding onnxruntime to the lock would silently resurrect this exact
+    conflict -- catch it here instead."""
+    for line in LOCK.read_text().splitlines():
+        assert not line.startswith("onnxruntime=="), (
+            "onnxruntime must not be in requirements.lock -- see "
+            "dnsmos_model.py / PROTOCOL §5.5 for why (2026-09-09)")

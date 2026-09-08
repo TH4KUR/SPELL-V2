@@ -6,9 +6,10 @@ Laws pinned here:
     144,160-sample windows, 1 s hop, self-tiling of short clips, hop-mean;
   * staged audio is 16 kHz mono — any other rate is a LOUD refusal (no silent
     resample path; the frozen env carries no librosa);
-  * the onnx session is injected (workers are subprocesses on Ada; tests use a
-    fake session so the suite never needs onnxruntime — the real-model test
-    skips unless onnxruntime imports);
+  * the model is injected (workers are subprocesses on Ada; tests use a fake
+    callable so the suite never needs the real weights — the real-model test
+    runs unconditionally against dnsmos_model.DNSMOSTorch, no onnxruntime
+    anywhere: 2026-09-09, PROTOCOL §5.5);
   * only TRAIN-pool rows are scored (§5 item 12) and the output is sorted by id.
 """
 
@@ -20,6 +21,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -27,7 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 import score_dnsmos as S  # noqa: E402
 
-MODEL = PROJECT_ROOT / "models" / "dnsmos" / "sig_bak_ovr.onnx"
+TORCH_MODEL = PROJECT_ROOT / "models" / "dnsmos" / "sig_bak_ovr_torch.pt"
 
 
 def test_calibration_coefficients_are_the_vendored_nonpersonalized_set():
@@ -50,11 +52,10 @@ def test_calibration_is_monotone_on_plausible_range():
 class FakeSession:
     """Returns a fixed raw vector per hop: sig=1.0, bak=2.0, ovr=3.0."""
 
-    def run(self, None_, feed):
-        x = feed["input_1"]
-        assert x.dtype == np.float32
-        assert x.shape == (1, S.LEN_SAMPLES)
-        return [np.array([[1.0, 2.0, 3.0]], dtype=np.float32)]
+    def __call__(self, feed):
+        assert feed.dtype == torch.float32
+        assert tuple(feed.shape) == (1, S.LEN_SAMPLES)
+        return torch.tensor([[1.0, 2.0, 3.0]], dtype=torch.float32)
 
 
 def test_score_audio_tiles_short_clips_and_averages_hops():
@@ -126,17 +127,17 @@ def test_train_pool_only_and_sorted_output(tmp_path, monkeypatch):
                                 "sig_mos", "bak_mos", "ovr_mos", "n_hops"]
 
 
-def test_real_model_runs_if_onnxruntime_present(tmp_path):
-    """Integration gate for the Ada job — runs wherever onnxruntime exists."""
-    ort = pytest.importorskip("onnxruntime")
-    assert MODEL.exists(), "vendored weights missing"
+def test_real_model_runs_end_to_end(tmp_path):
+    """Integration gate for the Ada job — the real dnsmos_model.DNSMOSTorch,
+    no onnxruntime anywhere (2026-09-09, PROTOCOL §5.5)."""
+    assert TORCH_MODEL.exists(), "vendored torch weights missing"
     import soundfile as sf
 
     fs = 16000
     wav = tmp_path / "tone.flac"
     sf.write(wav, 0.1 * np.sin(2 * np.pi * 220 * np.arange(2 * fs) / fs), fs,
              subtype="PCM_16")
-    session = S.load_session(MODEL)
+    session = S.load_session(TORCH_MODEL)
     audio, fs_in = sf.read(wav, dtype="float32")
     row = S.score_audio(audio, session)
     assert fs_in == fs

@@ -280,14 +280,19 @@ laptop filesystem.
    too, not just by its declared pin: `import onnxruntime` raises
    `AttributeError: _ARRAY_API not found` — the canonical numpy-2.0 C-ABI
    break for a compiled extension built against numpy 1.x and never
-   rebuilt. **DNSMOS scoring is BLOCKED** on this dependency; resolving it
-   needs either a newer onnxruntime build (numpy-2.0-compatible AND still
-   manylinux2014/GLIBC-2.17-compatible — unverified) or porting
-   `score_dnsmos.py`'s inference to pure PyTorch, dropping onnxruntime
-   entirely. `scripts/setup_env.sbatch`'s smoke-check treats this import
-   failure as a NON-FATAL, clearly-labeled warning (numpy/scipy/lightning
-   etc. still fail the reconcile hard, as they should) so this known,
-   isolated failure never again masks the rest of the env being healthy.
+   rebuilt. **Resolution (user decision, 2026-09-09): onnxruntime is DROPPED
+   ENTIRELY.** `scripts/score_dnsmos.py` now runs `dnsmos_model.DNSMOSTorch`,
+   a pure-PyTorch reimplementation of the vendored ONNX graph, extracted and
+   verified bit-equivalent (<1e-6 max abs diff) by
+   `scripts/port_dnsmos_to_torch.py` against the ONNX graph directly (run in
+   a throwaway venv, never `~/envs/spell` — see that script's docstring).
+   `requirements.lock` no longer carries onnxruntime (nor its
+   onnxruntime-only transitive deps coloredlogs/flatbuffers/humanfriendly);
+   `scripts/setup_env.sbatch` actively uninstalls any leftover copy so the
+   live env matches the lock exactly. `tests/test_lockfile_pins.py::
+   test_onnxruntime_never_reenters_the_lock` guards against a future
+   hand-install silently resurrecting this. See
+   `models/dnsmos/PROVENANCE.md` for the full graph trace and verification.
    Going forward: after ANY hand-install, diff `pip freeze` output against
    the CURRENT lock before overwriting it, and re-run the suite-critical
    smoke imports (`scripts/setup_env.sbatch`'s own check) BEFORE committing —
@@ -442,9 +447,12 @@ activation) in the same four scripts, fixed in the same item; `lock-numpy-fix`
 (2026-09-09) restored numpy==2.5.2 in requirements.lock after job 2691962
 showed the onnxruntime install's silent numpy downgrade had broken
 scipy/lightning imports, discovered the numpy==2.5.2/onnxruntime==1.18.1 pins
-are irreconcilable in one pip resolve, split `setup_env.sbatch` into a
-main lock pass plus a separate `--no-deps` onnxruntime install, and amended
-§5.5 with the `pip freeze`-is-not-validation lesson.
+are irreconcilable in one pip resolve, and amended §5.5 with the
+`pip freeze`-is-not-validation lesson; `dnsmos-torch-port` (2026-09-09)
+confirmed onnxruntime==1.18.1 crashes at runtime under numpy>=2.0 (not just
+its declared pin) and resolved it by dropping onnxruntime entirely —
+`dnsmos_model.DNSMOSTorch` is a verified pure-PyTorch port of the vendored
+ONNX graph, `requirements.lock` no longer carries onnxruntime at all.
 Earlier wording remains in git history.
 
 ## 10. Known issues & permanent policies
