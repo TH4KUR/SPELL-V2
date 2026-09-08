@@ -33,6 +33,7 @@ def make_ctx() -> SelectionContext:
     index = pd.DataFrame({
         "utterance_id": train + sorted(val),
         "duration_s": [6.0] * 200,
+        "video_id": [u.split("/")[0] for u in train + sorted(val)],
     })
     return SelectionContext(index=index, train_ids=train, val_ids=val, universe=200)
 
@@ -91,6 +92,21 @@ def test_write_manifest_produces_lawful_pair(tmp_path):
         assert key in char
     assert char["realized_hours"] == pytest.approx(round(10 * 6.0 / 3600.0, 3),
                                                    abs=1e-9)
+    assert char["n_videos"] == 1                        # all 10 ids share v000
+    assert char["codebook_entropy_mean"] is None        # not provided → null
+
+
+def test_write_manifest_carries_subset_entropy(tmp_path):
+    """RESEARCH P2 stat sheet: subset mean codebook entropy is a first-class
+    characterization field when the token-stats table exists."""
+    ctx = make_ctx()
+    ids = sorted(ctx.train_ids)[:10]
+    txt, js = B.write_manifest("dsir_25pct_seed201", ids, ctx=ctx, fraction=0.25,
+                               selector="dsir", subset_seed=201, score_table=None,
+                               selector_meta={}, out_dir=tmp_path,
+                               codebook_entropy_mean=4.25)
+    char = json.loads(js.read_text(encoding="utf-8"))
+    assert char["codebook_entropy_mean"] == pytest.approx(4.25)
 
 
 def test_validate_manifest_rejects_law_breaches(tmp_path):

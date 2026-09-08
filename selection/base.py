@@ -100,6 +100,7 @@ def write_manifest(
     score_table: str | None,
     selector_meta: dict[str, Any],
     out_dir: str | Path,
+    codebook_entropy_mean: float | None = None,
 ) -> tuple[Path, Path]:
     """Write the manifest pair; returns (txt, json). Sorting + validation are the
     writer's job — a manifest that cannot prove itself is never written."""
@@ -110,8 +111,10 @@ def write_manifest(
     ordered = sorted(set(ids))
     _check_ids(ordered, ctx, k_expected=None)
     k = len(ordered)
-    durations = ctx.index.set_index("utterance_id")["duration_s"]
-    realized_h = float(durations.loc[ordered].sum()) / 3600.0
+    by_id = ctx.index.set_index("utterance_id")
+    realized_h = float(by_id["duration_s"].loc[ordered].sum()) / 3600.0
+    n_videos = (int(by_id["video_id"].loc[ordered].nunique())
+                if "video_id" in by_id.columns else None)
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -129,6 +132,9 @@ def write_manifest(
         "pool_size": len(ctx.train_ids),
         "subset_seed": None if subset_seed is None else int(subset_seed),
         "realized_hours": round(realized_h, 3),
+        "n_videos": n_videos,
+        "codebook_entropy_mean": (None if codebook_entropy_mean is None
+                                  else round(float(codebook_entropy_mean), 4)),
         "budget_rule": "universe_budget(universe, fraction), round-half-up, "
                        "BY UTTERANCE COUNT",
         "note": "val split never sampled (§2.5); drawn ids are a frozen identity "

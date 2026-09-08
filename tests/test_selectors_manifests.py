@@ -54,6 +54,9 @@ def ctx_env(tmp_path, monkeypatch):
     pd.DataFrame({"utterance_id": ids,
                   "influence": (rng % 13).astype(float)}).to_parquet(
         scores / "less_influence_seed201.parquet")
+    pd.DataFrame({"utterance_id": ids,
+                  "codebook_entropy": (rng % 7).astype(float) + 1.0}).to_parquet(
+        scores / "token_stats.parquet")
     out = tmp_path / "subsets"
     return ctx, scores, out
 
@@ -117,3 +120,5 @@ def test_characterization_carries_selector_meta(ctx_env):
     assert "loss_mean" in json.dumps(char["selector_meta"])
     assert char["score_table"] == "scores/proxy_scores.parquet"
     assert char["subset_seed"] is None
+    assert char["codebook_entropy_mean"] is not None    # token_stats table exists
+    assert char["n_videos"] >= 1

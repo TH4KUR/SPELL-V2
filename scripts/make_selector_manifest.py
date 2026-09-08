@@ -129,10 +129,20 @@ def main(argv=None) -> int:
     pct = int(round(args.fraction * 100))
     stem = f"{args.selector}_{pct}pct" + (f"_seed{seed}" if seed is not None else "")
     rel_table = spec["table"].format(seed=seed) if "{seed}" in spec["table"] else spec["table"]
+    # RESEARCH P2 stat sheet: subset mean codebook entropy from the shared
+    # token_stats table (emitted by the Ada k-means job), when it exists.
+    entropy_mean = None
+    ts_path = args.scores_dir / "token_stats.parquet"
+    if ts_path.exists():
+        ts = pd.read_parquet(ts_path)
+        sub = ts[ts["utterance_id"].isin(set(ids))]
+        if not sub.empty:
+            entropy_mean = float(sub["codebook_entropy"].mean())
     txt, js = write_manifest(
         stem, ids, ctx=ctx, fraction=args.fraction, selector=args.selector,
         subset_seed=seed, score_table=rel_table,
-        selector_meta=spec["meta"](seed), out_dir=args.out_dir)
+        selector_meta=spec["meta"](seed), out_dir=args.out_dir,
+        codebook_entropy_mean=entropy_mean)
     validate_manifest(txt, k_expected=k, ctx=ctx)
     print(f"[selector] {stem}: k={k} from {rel_table} "
           f"({txt} + .json, validated)")
