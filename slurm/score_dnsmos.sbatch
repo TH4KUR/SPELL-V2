@@ -16,7 +16,7 @@
 # Writes scores/dnsmos_scores.parquet INTO the clone; commit-from-Ada per §5
 # item 12 afterwards. Weights are vendored (models/dnsmos/) — no internet.
 set -euo pipefail
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="${SLURM_SUBMIT_DIR}"
 cd "$REPO_ROOT"
 mkdir -p logs
 : "${SPELL_DATA_ROOT:=$HOME/spell/data}"

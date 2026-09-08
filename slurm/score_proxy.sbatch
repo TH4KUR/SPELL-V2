@@ -24,7 +24,7 @@ set -euo pipefail
 module purge
 module load u22/python/3.12.4
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="${SLURM_SUBMIT_DIR}"
 cd "$REPO_ROOT"
 mkdir -p logs
 
