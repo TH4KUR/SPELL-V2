@@ -61,26 +61,28 @@ rm -f /tmp/spell-lock-no-onnxruntime.$$.txt
 # onnxruntime==1.18.1 declares `numpy<2.0`, which HARD-CONFLICTS with
 # scipy==1.18.1/lightning/torchmetrics needing numpy>=2.0 (pip's resolver
 # refuses the two together: 2026-09-09 incident). Installing it with
-# --no-deps skips that check entirely — numpy stays at the lock's pin,
-# onnxruntime's OWN files land untouched. numpy 2.0's C-ABI is documented as
-# backward-compatible with extensions built against 1.x, so this is EXPECTED
-# to work, but it is NOT VERIFIED — the smoke-check below only proves
-# `import onnxruntime` succeeds, not that inference is numerically correct.
-# scripts/score_dnsmos.py is the actual runtime proof; treat its first real
-# output as the go/no-go, not this import.
+# --no-deps skips that check entirely so numpy stays at the lock's pin, but
+# CONFIRMED BROKEN AT RUNTIME (2026-09-09): its compiled pybind bindings were
+# built against numpy 1.x and crash under numpy>=2.0 (`AttributeError:
+# _ARRAY_API not found` — the canonical numpy-2.0 C-ABI break for an
+# unrebuilt 1.x extension). This is not a conservative pin; DNSMOS scoring is
+# BLOCKED on this dependency until it's replaced (newer onnxruntime build, or
+# a pure-PyTorch port of score_dnsmos.py) — see PROTOCOL §5.5.
 ORT_PIN="$(grep '^onnxruntime==' "$LOCK" | head -1)"
 [[ -n "$ORT_PIN" ]] || { echo "FATAL: onnxruntime pin missing from $LOCK" >&2; exit 2; }
 echo "[setup_env] step 3/3: ${ORT_PIN} via --no-deps (numpy<2.0 conflict, see comment above)"
 python -m pip install --no-cache-dir --no-deps "$ORT_PIN"
 
-# ---- smoke check: the suite-critical imports resolve. Nothing fancier — pip's
-# ---- exact-pin reconcile above IS the version guarantee; we don't re-audit it.
+# ---- smoke check: suite-critical imports resolve. onnxruntime is checked
+# ---- SEPARATELY and NON-FATALLY — it is a KNOWN, tracked failure (above),
+# ---- and must never mask a real regression in the packages that matter for
+# ---- every other job (numpy/scipy/lightning etc., which DO fail this loop
+# ---- hard, as they should).
 python - <<'PY'
 import importlib
 
 mods = ["numpy", "pandas", "pyarrow", "yaml", "soundfile", "jiwer", "wandb",
-        "pytest", "lightning", "pytorch_lightning", "torch",
-        "onnxruntime"]   # §5.5 suite-critical
+        "pytest", "lightning", "pytorch_lightning", "torch"]   # §5.5 suite-critical
 for m in mods:
     importlib.import_module(m)
     print("[setup_env] import OK:", m)
@@ -91,6 +93,13 @@ if torch.cuda.is_available():
     print("[setup_env] cuda:", torch.version.cuda, "| device:", torch.cuda.get_device_name(0))
 else:
     print("[setup_env] cuda: not visible from this (gpu:0 CPU) allocation — expected here")
+
+try:
+    importlib.import_module("onnxruntime")
+    print("[setup_env] import OK: onnxruntime")
+except Exception as e:
+    print(f"[setup_env] WARNING: onnxruntime import FAILED (known issue, "
+          f"DNSMOS scoring blocked, PROTOCOL §5.5): {e!r}")
 PY
 
-echo "[setup_env] done — ~/envs/spell now satisfies requirements.lock"
+echo "[setup_env] done — ~/envs/spell satisfies requirements.lock (onnxruntime excepted, see above)"

@@ -275,18 +275,25 @@ laptop filesystem.
    fixes this, only splitting the install does: `scripts/setup_env.sbatch`
    installs everything else via the normal dependency-checked `-r` pass, then
    onnxruntime SEPARATELY via `--no-deps` (skips onnxruntime's own resolver
-   check; numpy stays at the lock's pin). This is UNVERIFIED at the binary
-   level (numpy 2.0's C-ABI is documented backward-compatible with 1.x
-   extensions, but onnxruntime's compiled `.so`s have not been proven to
-   actually run correctly against numpy>=2.0 here) — `scripts/score_dnsmos.py`
-   producing correct scores is the real go/no-go, not the bare import.
+   check; numpy stays at the lock's pin). Act 3 — the resulting env's
+   smoke-check CONFIRMED onnxruntime==1.18.1 is broken at the binary level
+   too, not just by its declared pin: `import onnxruntime` raises
+   `AttributeError: _ARRAY_API not found` — the canonical numpy-2.0 C-ABI
+   break for a compiled extension built against numpy 1.x and never
+   rebuilt. **DNSMOS scoring is BLOCKED** on this dependency; resolving it
+   needs either a newer onnxruntime build (numpy-2.0-compatible AND still
+   manylinux2014/GLIBC-2.17-compatible — unverified) or porting
+   `score_dnsmos.py`'s inference to pure PyTorch, dropping onnxruntime
+   entirely. `scripts/setup_env.sbatch`'s smoke-check treats this import
+   failure as a NON-FATAL, clearly-labeled warning (numpy/scipy/lightning
+   etc. still fail the reconcile hard, as they should) so this known,
+   isolated failure never again masks the rest of the env being healthy.
    Going forward: after ANY hand-install, diff `pip freeze` output against
    the CURRENT lock before overwriting it, and re-run the suite-critical
    smoke imports (`scripts/setup_env.sbatch`'s own check) BEFORE committing —
    a changed pin on a package you did not ask to install is the signal to
    stop and look, not to freeze through it. Pinned by
-   `tests/test_lockfile_pins.py` (numpy must stay >=2.0) and
-   `scripts/setup_env.sbatch`'s smoke-check now includes `onnxruntime`.
+   `tests/test_lockfile_pins.py` (numpy must stay >=2.0).
    `scripts/setup_env.sbatch` builds fresh or
    reconciles the existing env EXACTLY against the lock (this is also how newly
    locked deps — pytest, lightning — reach the live env); pip's exact-pin install
