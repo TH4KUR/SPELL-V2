@@ -23,8 +23,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 
 # Protocol revision string embedded in every run_manifest.json — bump whenever
 # PROTOCOL.md gains binding rules. History: universe-v2, ada-storage-rev1,
-# contamination-guard (§3.13–16: halo re-masking, GroupNorm, absolute HPs, dev GPU).
-PROTOCOL_REVISION = "universe-v2+ada-storage-rev1+contamination-guard"
+# contamination-guard (§3.13–16: halo re-masking, GroupNorm, absolute HPs, dev GPU),
+# sig-v2-github-mirror (§3.18 significance v2 + §5.7 mirror), p2-selection-law
+# (§3.19–3.21, §5 item 12, §3.17(d), §7 sweep gate — 2026-09-08).
+PROTOCOL_REVISION = (
+    "universe-v2+ada-storage-rev1+contamination-guard"
+    "+sig-v2-github-mirror+p2-selection-law"
+)
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:

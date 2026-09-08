@@ -3,9 +3,18 @@ datasets/
 data/
 runs/
 *.parquet
+# ...except the committed truth tables (PROTOCOL §5 item 12)
+!data_index.parquet
+!scores/*.parquet
 wandb/
 outputs/
 lightning_logs/
+
+# Third-party vendored checkout — only selected weights get vendored (models/)
+DNS-Challenge/
+
+# Advisor draft — NEVER commit (HANDOFF §2)
+mail.md
 
 # Python
 __pycache__/

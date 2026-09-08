@@ -113,7 +113,13 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
       (c) any change touching trainer/callback/logger assembly triggers a
       FIRST-EPOCH check that each expected series exists on W&B before the rest
       of a long run is trusted — a silent miss voids gates discovered weeks late
-      (2026-08-27 incident).
+      (2026-08-27 incident);
+      (d) the run-id namespace is FROZEN (2026-09-08): every formal run's id is
+      exactly `<track>/<manifest-stem>_seed<seed>_job<SLURM_JOB_ID>_t<task>` as
+      derived at `slurm/template.sbatch` (mechanically pinned by
+      `tests/test_wandb_naming_law.py`); backfilled historical runs adopt the
+      same pattern with their original job ids. Renaming requires a protocol
+      revision note first.
 18. **Significance criterion v2 (user-approved amendment A, 2026-09-08)**: a
     selector BEATS random on a track iff ALL three hold:
       (a) mean ΔWER vs the n=5 random-floor mean exceeds `2·σ_diff`, where
@@ -128,6 +134,36 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
           budget voids the beats-random claim.
     PARITY claims ("selector ties random") are made via TOST (two one-sided
     equivalence tests) against the same σ_diff — never via absence of (a).
+19. **Budget-sweep scheduling (user amendment, 2026-09-08 — completes §3.18(c))**:
+      (a) P2 (selection) generates manifests for budgets {5, 10, 25}% × ALL
+          selectors — selection is front-loaded, training is not;
+      (b) training order: ALL 25% cells first;
+      (c) a WRITTEN post-25% gate (§7) decides which selectors advance to
+          5%/10% training cells BEFORE any such run is submitted;
+      (d) random itself is part of every swept budget (×3 subset seeds per
+          swept budget: 5% = seeds 111–113, 10% = seeds 121–123), and
+          anti-selection (worst-by-proxy-loss) is the MANDATORY sanity column
+          in every cell — its harm must GROW as the budget shrinks, or the
+          whole apparatus is suspect;
+      (e) a selector evaluated at a single budget is reported WITHOUT
+          significance language in any paper (criterion (c) presupposes the
+          sweep).
+20. **Seed-law interpretation (2026-09-08, amending §3.8)**: the "every other
+    condition ×3 seeds" law applies to genuinely STOCHASTIC selectors only —
+    there the subset seed is the selector's internal-RNG identity (k-means
+    init 201–203, DSIR resample 201–203, LESS projection 201–203).
+    Deterministic selectors (DNSMOS top-k, proxy loss-ranking, EL2N,
+    anti-selection) are ×1: one frozen manifest, one training run per track —
+    a repeated identical subset would only re-run the same condition. Random
+    floors remain ×5 at 25% and ×3 per swept budget (§3.19(d)).
+21. **Val-as-target disclosure (2026-09-08)**: the target-conditioned selectors
+    (DSIR, LESS) use the frozen val split (`subsets/splits/val_ids.txt`,
+    2,007 utts, video-disjoint) as selection-TARGET METADATA ONLY. Val
+    utterances NEVER enter any subset manifest, remain excluded from model
+    selection, and the official test set stays quarantined (§3.5). Accepted
+    consequence, disclosed in the paper: val-WER gate readings for
+    val-targeted selector cells are optimistic-confounded; final-eval claims
+    are unaffected.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
@@ -266,6 +302,17 @@ laptop filesystem.
     edit in repo → tests green → push → pull → resubmit. A temporary bypass
     script requires explicit user authorization AND post-run reconciliation of
     anything it produced (see §10 pilot-A entry).
+12. **Score tables (2026-09-08)**: per-utterance selector scores (DNSMOS,
+    k-means assignments, DSIR weights, proxy loss/EL2N, LESS influences) live
+    in `scores/*.parquet`, keyed by `utterance_id`, TRAIN-universe rows only
+    (29,064 — val/reference fits happen INSIDE the Ada scoring job and are
+    never committed as rows). They are committed to the repo (data-derived ⇒
+    added to the §5.7 public-release scrub list; `.gitignore` carries explicit
+    `!scores/*.parquet` and `!data_index.parquet` negations over the blanket
+    `*.parquet`). Because score files are BORN on Ada, committing them FROM the
+    Ada clone (`git add scores && git commit && git push`; laptop pulls) is
+    SANCTIONED; §5 item 11 (no live edits to tracked files) still applies to
+    everything tracked.
 
 ## 6. Run manifest contract
 
@@ -288,6 +335,17 @@ start/end timestamps.
   emitted by the module to its logger each epoch; `scripts/evaluate_track_b.py`
   post-hoc decoding remains the fallback cross-check and the source of official
   final numbers (policy set 2026-08-27 after fixing dead live-val logging).
+- **Post-25% sweep gate (written 2026-09-08, implements §3.19(c))**: 5%/10%
+  training cells may be submitted ONLY when (i) every 25% selector cell is
+  COMPLETED, drained, and summarized (`scripts/summarize_track_b.py`), (ii)
+  zero protocol deviations are logged in those runs, (iii) the across-selector
+  mean-ΔWER spread exceeds 1×σ_diff — otherwise convene on the H2c early-stop
+  (RESEARCH §9) BEFORE spending on the sweep, and (iv) the advancing-selector
+  list is recorded in THIS section's revision history BEFORE submission.
+  Random is swept at every budget; anti-selection rides along as the sanity
+  column. If the 25% picture is ambiguous (|Δ| < 2σ_diff for the leading
+  methods), the 5% cell promotes INTO ICASSP scope — a single-budget ambiguous
+  result is unpublishable; §3.19(e) protects single-budget claims meanwhile.
 
 ## 8. Deferred-but-revivable research questions
 
@@ -322,7 +380,9 @@ bash scripts/debug.sh                        # single-GPU debug launcher (tests 
 Revision history: `universe-v2` re-froze the internal split over the selectable universe;
 `ada-storage-rev1` superseded NAS write-through with relay archiving + HOME gates +
 hardware drift guard; `sig-v2-github-mirror` (2026-09-08) added the significance
-criterion v2 (§3.18) and the GitHub mirror law (§5.7). Earlier wording remains in git history.
+criterion v2 (§3.18) and the GitHub mirror law (§5.7); `p2-selection-law`
+(2026-09-08) added §3.19–3.21, §5 item 12, §3.17(d), and the §7 post-25% sweep
+gate. Earlier wording remains in git history.
 
 ## 10. Known issues & permanent policies
 

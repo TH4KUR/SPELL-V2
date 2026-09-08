@@ -13,6 +13,17 @@ def test_protocol_loads_and_validates():
     assert len(h) == 64 and h == config.config_hash(proto)  # stable
 
 
+def test_protocol_revision_names_every_law():
+    """§6: run_manifest.json attests the protocol revision a bundle ran under —
+    the string must name EVERY revision, or manifests under-report the contract.
+    `sig-v2-github-mirror` (§3.18/§5.7, 2026-09-08) and `p2-selection-law`
+    (§3.19–3.21, §5 item 12, §3.17(d), §7 sweep gate) must be appended."""
+    assert config.PROTOCOL_REVISION == (
+        "universe-v2+ada-storage-rev1+contamination-guard"
+        "+sig-v2-github-mirror+p2-selection-law"
+    )
+
+
 def test_universe_budget_rounding_rule():
     # The real Phase-0 numbers: 31,071 selectable utts at 25% -> 7,768 (round-half-up)
     assert config.universe_budget(31071, 0.25) == 7768
