@@ -114,6 +114,20 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
       FIRST-EPOCH check that each expected series exists on W&B before the rest
       of a long run is trusted — a silent miss voids gates discovered weeks late
       (2026-08-27 incident).
+18. **Significance criterion v2 (user-approved amendment A, 2026-09-08)**: a
+    selector BEATS random on a track iff ALL three hold:
+      (a) mean ΔWER vs the n=5 random-floor mean exceeds `2·σ_diff`, where
+          `σ_diff = σ·√(1/n_sel + 1/5)` with σ = the formal n=5 random-floor σ
+          (§3.8) and n_sel = that selector cell's seed count — a mean-difference
+          test replacing the former single-number `ΔWER > 0.005` rule, which
+          conflated raw seed spread with mean-difference noise;
+      (b) the result is Holm-corrected across ALL selectors in the roster
+          (family = every selector compared against random, per track);
+      (c) the advantage DIRECTION (better/worse than random) is consistent
+          across the budget sweep {5, 10, 25}% — a sign flip at any swept
+          budget voids the beats-random claim.
+    PARITY claims ("selector ties random") are made via TOST (two one-sided
+    equivalence tests) against the same σ_diff — never via absence of (a).
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
@@ -210,6 +224,14 @@ laptop filesystem.
    `git clone`, `git remote add`) — they assume this state and contain only
    INCREMENTAL commands. Remote examples in handoffs use full SSH URLs or the
    `ada`/`ada:` alias form, never local paths.
+   **GitHub mirror (user-approved amendment B, 2026-09-08)**: the laptop also
+   carries `origin` = `github.com/TH4KUR/SPELL-V2` (PRIVATE). `ada` remains the
+   SOLE CANONICAL remote — Ada pulls only from its local bare repo and never
+   from GitHub; `origin` is a PUSH-ONLY mirror, updated at sync points from the
+   laptop (both pushes carry the same commit). Compute nodes never touch GitHub
+   and no GitHub credentials exist on Ada. Before ANY public release: scrub
+   data-derived artifacts (`data_index.parquet`, split lists), cluster topology
+   (`KNOWN_BAD_NODES.md`, quotas), and W&B entity references.
 8. **Scheduling constants for EVERY sbatch/srun block, GPU or CPU alike** (no drift):
    `-p u22 -A research --qos=medium --constraint=2080ti --exclude=gnode066`.
    The FULL string — constraint and exclude included — applies to CPU-only jobs
@@ -299,7 +321,8 @@ bash scripts/debug.sh                        # single-GPU debug launcher (tests 
 
 Revision history: `universe-v2` re-froze the internal split over the selectable universe;
 `ada-storage-rev1` superseded NAS write-through with relay archiving + HOME gates +
-hardware drift guard. Earlier wording remains in git history.
+hardware drift guard; `sig-v2-github-mirror` (2026-09-08) added the significance
+criterion v2 (§3.18) and the GitHub mirror law (§5.7). Earlier wording remains in git history.
 
 ## 10. Known issues & permanent policies
 
