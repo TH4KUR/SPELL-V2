@@ -51,9 +51,27 @@ python -m pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu124 \
     "torch==2.6.0+cu124"
 
-echo "[setup_env] step 2/2: reconcile full lockfile (installs anything missing,"
-echo "            no-ops what already matches; mismatched pins are an install error)"
-python -m pip install --no-cache-dir -r "$LOCK"
+echo "[setup_env] step 2/3: reconcile the lockfile EXCEPT onnxruntime (installs"
+echo "            anything missing, no-ops what already matches; mismatched pins"
+echo "            are an install error)"
+grep -v '^onnxruntime==' "$LOCK" > /tmp/spell-lock-no-onnxruntime.$$.txt
+python -m pip install --no-cache-dir -r /tmp/spell-lock-no-onnxruntime.$$.txt
+rm -f /tmp/spell-lock-no-onnxruntime.$$.txt
+
+# onnxruntime==1.18.1 declares `numpy<2.0`, which HARD-CONFLICTS with
+# scipy==1.18.1/lightning/torchmetrics needing numpy>=2.0 (pip's resolver
+# refuses the two together: 2026-09-09 incident). Installing it with
+# --no-deps skips that check entirely — numpy stays at the lock's pin,
+# onnxruntime's OWN files land untouched. numpy 2.0's C-ABI is documented as
+# backward-compatible with extensions built against 1.x, so this is EXPECTED
+# to work, but it is NOT VERIFIED — the smoke-check below only proves
+# `import onnxruntime` succeeds, not that inference is numerically correct.
+# scripts/score_dnsmos.py is the actual runtime proof; treat its first real
+# output as the go/no-go, not this import.
+ORT_PIN="$(grep '^onnxruntime==' "$LOCK" | head -1)"
+[[ -n "$ORT_PIN" ]] || { echo "FATAL: onnxruntime pin missing from $LOCK" >&2; exit 2; }
+echo "[setup_env] step 3/3: ${ORT_PIN} via --no-deps (numpy<2.0 conflict, see comment above)"
+python -m pip install --no-cache-dir --no-deps "$ORT_PIN"
 
 # ---- smoke check: the suite-critical imports resolve. Nothing fancier — pip's
 # ---- exact-pin reconcile above IS the version guarantee; we don't re-audit it.

@@ -257,15 +257,29 @@ laptop filesystem.
    dependency, that dependency belongs in `scripts/setup_env.sbatch` /
    requirements.lock so the env stays reproducible from scratch — hand-installs
    are the exception, not the workflow.
-   **`pip freeze` is a DUMP, not a validation (2026-09-09 incident)**: an
-   interactive `pip install onnxruntime==1.18.1` silently downgraded
-   numpy 2.5.2 -> 1.26.4 (satisfying onnxruntime's resolver, breaking
-   scipy 1.18.1/lightning/torchmetrics, which need numpy>=2.0 at import time —
-   neither pip install itself complained, since nothing in either package's
-   *declared* metadata conflicted). `pip freeze > requirements.lock` then
-   faithfully committed that broken pair as the new frozen truth, and
-   `scripts/setup_env.sbatch` could not have caught it either — reconciling a
-   venv to an internally-inconsistent lock just reconciles it to broken.
+   **`pip freeze` is a DUMP, not a validation (2026-09-09 incident, TWO acts)**:
+   act 1 — a bare `pip install onnxruntime==1.18.1` (no other constraints on
+   the command line) let pip's resolver silently downgrade numpy 2.5.2 ->
+   1.26.4 to satisfy onnxruntime's OWN declared `numpy<2.0,>=1.21.6` pin —
+   pip had no reason to preserve numpy's prior version since nothing on that
+   command line asked it to. `pip freeze > requirements.lock` then faithfully
+   committed that downgraded numpy alongside scipy==1.18.1/lightning/
+   torchmetrics, which need numpy>=2.0 at import time — breaking every job
+   that imports Lightning (job 2691962). Act 2 — reverting ONLY the numpy pin
+   back to 2.5.2 in the same lock, still installed via one flat
+   `pip install -r requirements.lock`, surfaced the REAL conflict pip had
+   been quietly resolving around: asked for numpy==2.5.2 AND
+   onnxruntime==1.18.1 explicitly together, pip refuses outright
+   (`onnxruntime 1.18.1 depends on numpy<2.0`). The two packages' pins are
+   FUNDAMENTALLY incompatible in one resolver pass — no version juggling
+   fixes this, only splitting the install does: `scripts/setup_env.sbatch`
+   installs everything else via the normal dependency-checked `-r` pass, then
+   onnxruntime SEPARATELY via `--no-deps` (skips onnxruntime's own resolver
+   check; numpy stays at the lock's pin). This is UNVERIFIED at the binary
+   level (numpy 2.0's C-ABI is documented backward-compatible with 1.x
+   extensions, but onnxruntime's compiled `.so`s have not been proven to
+   actually run correctly against numpy>=2.0 here) — `scripts/score_dnsmos.py`
+   producing correct scores is the real go/no-go, not the bare import.
    Going forward: after ANY hand-install, diff `pip freeze` output against
    the CURRENT lock before overwriting it, and re-run the suite-critical
    smoke imports (`scripts/setup_env.sbatch`'s own check) BEFORE committing —
@@ -420,8 +434,10 @@ job 2691954 caught a second latent ordering bug (python invoked before venv
 activation) in the same four scripts, fixed in the same item; `lock-numpy-fix`
 (2026-09-09) restored numpy==2.5.2 in requirements.lock after job 2691962
 showed the onnxruntime install's silent numpy downgrade had broken
-scipy/lightning imports, and amended §5.5 with the `pip freeze`-is-not-
-validation lesson.
+scipy/lightning imports, discovered the numpy==2.5.2/onnxruntime==1.18.1 pins
+are irreconcilable in one pip resolve, split `setup_env.sbatch` into a
+main lock pass plus a separate `--no-deps` onnxruntime install, and amended
+§5.5 with the `pip freeze`-is-not-validation lesson.
 Earlier wording remains in git history.
 
 ## 10. Known issues & permanent policies

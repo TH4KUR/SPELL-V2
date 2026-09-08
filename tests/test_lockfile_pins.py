@@ -39,3 +39,15 @@ def test_numpy_stays_v2_for_scipy_lightning_compat():
         f"scipy=={_pin('scipy')} (and lightning/torchmetrics above it) "
         "require numpy>=2.0 at import time -- this exact downgrade broke "
         "score_proxy.py on Ada (2026-09-09, job 2691962)")
+
+
+def test_setup_env_installs_onnxruntime_via_no_deps():
+    """onnxruntime==1.18.1 declares numpy<2.0 -- pip's resolver REFUSES it
+    alongside numpy==2.5.2/scipy==1.18.1 in one `pip install -r` (2026-09-09:
+    the exact conflict pip reported after the numpy revert). setup_env.sbatch
+    must install onnxruntime SEPARATELY with --no-deps so its stale upper
+    pin never enters the same solve as the rest of the lock."""
+    text = (PROJECT_ROOT / "scripts" / "setup_env.sbatch").read_text()
+    assert "--no-deps" in text and "onnxruntime" in text, (
+        "setup_env.sbatch must install onnxruntime via a separate --no-deps "
+        "step, never folded into the main `pip install -r requirements.lock`")
