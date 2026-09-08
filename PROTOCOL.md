@@ -256,7 +256,24 @@ laptop filesystem.
    committing it to the repo. Better still: when a test run reveals a missing
    dependency, that dependency belongs in `scripts/setup_env.sbatch` /
    requirements.lock so the env stays reproducible from scratch — hand-installs
-   are the exception, not the workflow. `scripts/setup_env.sbatch` builds fresh or
+   are the exception, not the workflow.
+   **`pip freeze` is a DUMP, not a validation (2026-09-09 incident)**: an
+   interactive `pip install onnxruntime==1.18.1` silently downgraded
+   numpy 2.5.2 -> 1.26.4 (satisfying onnxruntime's resolver, breaking
+   scipy 1.18.1/lightning/torchmetrics, which need numpy>=2.0 at import time —
+   neither pip install itself complained, since nothing in either package's
+   *declared* metadata conflicted). `pip freeze > requirements.lock` then
+   faithfully committed that broken pair as the new frozen truth, and
+   `scripts/setup_env.sbatch` could not have caught it either — reconciling a
+   venv to an internally-inconsistent lock just reconciles it to broken.
+   Going forward: after ANY hand-install, diff `pip freeze` output against
+   the CURRENT lock before overwriting it, and re-run the suite-critical
+   smoke imports (`scripts/setup_env.sbatch`'s own check) BEFORE committing —
+   a changed pin on a package you did not ask to install is the signal to
+   stop and look, not to freeze through it. Pinned by
+   `tests/test_lockfile_pins.py` (numpy must stay >=2.0) and
+   `scripts/setup_env.sbatch`'s smoke-check now includes `onnxruntime`.
+   `scripts/setup_env.sbatch` builds fresh or
    reconciles the existing env EXACTLY against the lock (this is also how newly
    locked deps — pytest, lightning — reach the live env); pip's exact-pin install
    IS the version guarantee, and the script's post-build step just import-smoke-
@@ -400,7 +417,11 @@ criterion v2 (§3.18) and the GitHub mirror law (§5.7); `p2-selection-law`
 gate; `sbatch-repo-root-fix` (2026-09-09) added §10 item 13 and fixed all
 scorer sbatch scripts after job 2691902 died on a spool-relative `$0`, then
 job 2691954 caught a second latent ordering bug (python invoked before venv
-activation) in the same four scripts, fixed in the same item.
+activation) in the same four scripts, fixed in the same item; `lock-numpy-fix`
+(2026-09-09) restored numpy==2.5.2 in requirements.lock after job 2691962
+showed the onnxruntime install's silent numpy downgrade had broken
+scipy/lightning imports, and amended §5.5 with the `pip freeze`-is-not-
+validation lesson.
 Earlier wording remains in git history.
 
 ## 10. Known issues & permanent policies

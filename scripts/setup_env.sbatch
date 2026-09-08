@@ -61,7 +61,8 @@ python - <<'PY'
 import importlib
 
 mods = ["numpy", "pandas", "pyarrow", "yaml", "soundfile", "jiwer", "wandb",
-        "pytest", "lightning", "pytorch_lightning", "torch"]   # §5.5 suite-critical
+        "pytest", "lightning", "pytorch_lightning", "torch",
+        "onnxruntime"]   # §5.5 suite-critical
 for m in mods:
     importlib.import_module(m)
     print("[setup_env] import OK:", m)
