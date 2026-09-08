@@ -18,13 +18,16 @@
 # kmeans_assignments_seed{S}.parquet + token_stats.parquet. Commit-from-Ada
 # per §5 item 12 afterwards.
 set -euo pipefail
+module purge
+module load u22/python/3.12.4
+
 REPO_ROOT="${SLURM_SUBMIT_DIR}"
 cd "$REPO_ROOT"
 mkdir -p logs
 : "${SPELL_DATA_ROOT:=$HOME/spell/data}"
 export SPELL_DATA_ROOT
 [[ -d "$SPELL_DATA_ROOT" ]] || { echo "FATAL[data] data root missing: $SPELL_DATA_ROOT (§5.0)"; exit 3; }
-python scripts/check_storage.py --strict
 source ~/envs/spell/bin/activate
+python scripts/check_storage.py --strict
 python scripts/score_kmeans.py --seeds 201 202 203 --k 64 --out-dir scores
 echo "DONE score_kmeans — commit scores/ from this clone (§5 item 12)."

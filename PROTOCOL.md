@@ -217,15 +217,21 @@ laptop filesystem.
    interpreter that trained the runs), while discovery, structural checks and
    rsync/diff/archive stay shell-only on the login node. Direct writes outside $HOME are rejected by policy everywhere
    (`archive_mode != "relay"` raises).
-13. **REPO_ROOT resolution, LOCKED (2026-09-09 incident)**: every sbatch script
-    MUST derive `REPO_ROOT="${SLURM_SUBMIT_DIR}"` — NEVER
-    `$(cd "$(dirname "$0")/.." && pwd)`. This cluster's slurmd executes batch
-    scripts from a per-job spool copy, so `$0` does not resolve back into the
-    submitter's clone; the derived path is unwritable and `set -e` aborts on
-    the first `mkdir -p logs`. Pinned by `tests/test_sbatch_repo_root.py`
-    (job 2691902 was the casualty — `score_proxy.sbatch`, copied from the
-    then-current `score_{dnsmos,kmeans,dsir}.sbatch`, all three of which
-    carried the same bug and were fixed alongside it).
+13. **sbatch startup ordering, LOCKED (2026-09-09, two incidents same day)**:
+    (a) every sbatch script MUST derive `REPO_ROOT="${SLURM_SUBMIT_DIR}"` —
+    NEVER `$(cd "$(dirname "$0")/.." && pwd)`. This cluster's slurmd executes
+    batch scripts from a per-job spool copy, so `$0` does not resolve back
+    into the submitter's clone; the derived path is unwritable and `set -e`
+    aborts on the first `mkdir -p logs` (job 2691902). (b) every `python`
+    invocation MUST come AFTER `source ~/envs/spell/bin/activate` — PATH
+    carries no python at all beforehand unless the u22 module is also loaded,
+    so a bare `python scripts/check_storage.py` run first dies with
+    `command not found` (job 2691954, the very next resubmit after fixing
+    (a)). Both were latent in `score_{dnsmos,kmeans,dsir}.sbatch` and copied
+    into the first `score_proxy.sbatch` draft; all four were fixed together
+    and are pinned by `tests/test_sbatch_repo_root.py`. `template.sbatch` and
+    `setup_env.sbatch` never had either bug — they are the reference order to
+    copy from for any future sbatch script.
 3. **$HOME gates before every launch**: usage warn ≥20 GB, abort ≥23 GB;
    inode warn at 240k. `scripts/check_storage.py --strict` runs at job start in the
    SLURM template; soft mode locally.
@@ -392,7 +398,9 @@ hardware drift guard; `sig-v2-github-mirror` (2026-09-08) added the significance
 criterion v2 (§3.18) and the GitHub mirror law (§5.7); `p2-selection-law`
 (2026-09-08) added §3.19–3.21, §5 item 12, §3.17(d), and the §7 post-25% sweep
 gate; `sbatch-repo-root-fix` (2026-09-09) added §10 item 13 and fixed all
-scorer sbatch scripts after job 2691902 died on a spool-relative `$0`.
+scorer sbatch scripts after job 2691902 died on a spool-relative `$0`, then
+job 2691954 caught a second latent ordering bug (python invoked before venv
+activation) in the same four scripts, fixed in the same item.
 Earlier wording remains in git history.
 
 ## 10. Known issues & permanent policies

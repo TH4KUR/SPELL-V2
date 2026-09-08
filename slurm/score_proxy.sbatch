@@ -35,8 +35,8 @@ export SPELL_DATA_ROOT
 BUNDLE="${SPELL_PROXY_BUNDLE:?set SPELL_PROXY_BUNDLE to the proxy run bundle (runs/track_b/<id>)}"
 [[ -d "$BUNDLE" ]] || { echo "FATAL[bundle] no such proxy bundle: $BUNDLE"; exit 3; }
 
-python scripts/check_storage.py --strict
 source ~/envs/spell/bin/activate
+python scripts/check_storage.py --strict
 python -c "import hardware_guard; info = hardware_guard.assert_gpu(); print('[score_proxy] gpu:', info)"
 
 python scripts/score_proxy.py --bundle "$BUNDLE" --out scores/proxy_scores.parquet
