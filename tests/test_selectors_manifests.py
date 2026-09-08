@@ -46,7 +46,7 @@ def ctx_env(tmp_path, monkeypatch):
     pd.DataFrame({"utterance_id": ids,
                   "score_logit": [0.0] * 100 + [8.0] * 50,
                   "weight": [1.0] * 100 + [3000.0] * 50}).to_parquet(
-        scores / "dsir_weights_seed201.parquet")
+        scores / "dsir_weights.parquet")
     pd.DataFrame({"utterance_id": ids,
                   "loss_mean": rng.astype(float),
                   "el2n_mean": (150 - rng).astype(float)}).to_parquet(

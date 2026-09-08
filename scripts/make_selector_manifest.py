@@ -53,9 +53,10 @@ ROSTER: dict[str, dict] = {
     "dsir": dict(
         fn=lambda ctx, scores, budget, seed: dsir.select(ctx, scores, budget, seed),
         stochastic=True,
-        table="scores/dsir_weights_seed{seed}.parquet",
+        table="scores/dsir_weights.parquet",   # ONE deterministic fit table
         meta=lambda seed: {"target": "val split (disclosed, §3.21)",
-                           "resample": "k w/o replacement, p ∝ exp(logit)"},
+                           "resample": "k w/o replacement, p ∝ exp(logit)",
+                           "seed_note": "seed drives THIS laptop-side resample"},
     ),
     "lossrank": dict(
         fn=_seedless(proxy_rank.select_lossrank), stochastic=False,
