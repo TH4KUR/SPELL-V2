@@ -1,0 +1,12 @@
+{
+  "budget_rule": "universe_budget(universe, fraction), round-half-up, BY UTTERANCE COUNT",
+  "fraction": 0.1,
+  "k": 3107,
+  "note": "val split never sampled (monitoring-only); drawn ids are a frozen identity \u2014 training reads this file verbatim, never re-samples",
+  "pool": "subsets/splits/train_ids.txt",
+  "pool_size": 29064,
+  "realized_hours": 3.068,
+  "selector": "random",
+  "subset_seed": 121,
+  "universe_size": 31071
+}

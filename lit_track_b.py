@@ -66,6 +66,12 @@ class LitConformerCTC(pl.LightningModule):
         self._val_drops = 0
         self._val_rows: list[dict[str, Any]] = []
 
+        # Proxy-run EL2N accrual (Paul et al. 2021, CTC adaptation) — GATED:
+        # formal configs never set logging.el2n_log, so their bookkeeping is
+        # untouched (no accrual cost, no parquet rows, no W&B series).
+        self._el2n_enabled = bool(cfg.get("logging", {}).get("el2n_log", False))
+        self._train_el2n_acc: dict[str, list[float]] = defaultdict(list)
+
         # -- W&B-facing validation aggregates (MODULE-owned scalars).
         # Incremented in validation_step, consumed+reset ONLY in this module's
         # on_validation_epoch_end — which fires AFTER BundleCallback's hook, so
@@ -96,8 +102,9 @@ class LitConformerCTC(pl.LightningModule):
         }
         return sel, dropped
 
-    def _forward_ctc(self, sel: dict) -> tuple[Tensor, Tensor]:
-        """One model pass over valid rows → (per-utterance losses [B], log_probs)."""
+    def _forward_ctc(self, sel: dict) -> tuple[Tensor, Tensor, Tensor]:
+        """One model pass over valid rows → (per-utt losses [B], log_probs [B,T,V],
+        out_lengths [B])."""
         stream = sel["tokens"][:, self.input_stream, :]              # §2.3 RVQ₁
         log_probs, out_lengths = self.model(stream, sel["lengths"])
         loss_vec = ctc_lib.ctc_loss_per_utt(
@@ -107,7 +114,7 @@ class LitConformerCTC(pl.LightningModule):
             sel["text_lengths"],
             self.blank_id,
         )
-        return loss_vec, log_probs
+        return loss_vec, log_probs, out_lengths
 
     # ------------------------------------------------------------------ hooks
     def training_step(self, batch: dict, batch_idx: int):
@@ -120,9 +127,13 @@ class LitConformerCTC(pl.LightningModule):
                 flush=True,
             )
             return None                                              # skips optimizer step
-        loss_vec, _ = self._forward_ctc(sel)
+        loss_vec, log_probs, out_lengths = self._forward_ctc(sel)
         for uid, v in zip(sel["utterance_ids"], loss_vec.detach().cpu().tolist()):
             self._train_loss_acc[uid].append(float(v))
+        if self._el2n_enabled:
+            el2n_vec = ctc_lib.el2n_per_utt(log_probs.transpose(0, 1), out_lengths)
+            for uid, v in zip(sel["utterance_ids"], el2n_vec.detach().cpu().tolist()):
+                self._train_el2n_acc[uid].append(float(v))
 
         loss = loss_vec.mean()
         self.log("train/loss_step", loss, on_step=True, on_epoch=False, prog_bar=True)
@@ -148,7 +159,7 @@ class LitConformerCTC(pl.LightningModule):
         self._val_drops += len(dropped_v)
         if sel is None:
             return
-        loss_vec, log_probs = self._forward_ctc(sel)
+        loss_vec, log_probs, _ = self._forward_ctc(sel)
         hyps = ctc_lib.greedy_decode(log_probs, sel["lengths"], self.vocab)
         for uid, lv, ref_ids, hyp in zip(
             sel["utterance_ids"],
@@ -247,15 +258,20 @@ class LitConformerCTC(pl.LightningModule):
         reset by this class's own epoch-end hook (the LIVE W&B path) and are
         deliberately untouched here.
 
-        Returns {train:[(uid, mean_loss)], train_drops:int, val:snapshot|None}."""
+        Returns {train:[(uid, mean_loss)], train_drops:int, val:snapshot|None,
+        train_el2n:[(uid, mean_el2n)] (empty unless logging.el2n_log)}."""
         train = sorted((uid, sum(v) / len(v)) for uid, v in self._train_loss_acc.items())
         self._train_loss_acc.clear()
+        el2n = (sorted((uid, sum(v) / len(v)) for uid, v in self._train_el2n_acc.items())
+                if self._el2n_enabled else [])
+        self._train_el2n_acc.clear()
         drops = self._train_drops
         self._train_drops = 0
         val = self._build_val_snapshot()
         self._val_rows.clear()
         self._val_drops = 0
-        return {"train": train, "train_drops": drops, "val": val}
+        return {"train": train, "train_drops": drops, "val": val,
+                "train_el2n": el2n}
 
     # ------------------------------------------------------------ optimizer
     def configure_optimizers(self):

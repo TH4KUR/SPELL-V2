@@ -134,6 +134,58 @@ def test_floor_pairs_are_distinct_identities(s1, s2):
     assert abs(inter - expected_inter) < 0.15 * expected_inter
 
 
+# --------------------------------------- swept floor + proxy identities (P2) ----
+# §3.19(d): random is part of every budget sweep — 5% = seeds 111–113, 10% =
+# 121–123 (×3 per swept budget). seed301 @10% is the PROXY manifest (fixed
+# identity, train_seed frozen as everywhere). Same frozen-identity guarantees.
+
+SWEPT = [  # (stem, k, seed, fraction)
+    ("random_5pct_seed111", 1554, 111, 0.05),
+    ("random_5pct_seed112", 1554, 112, 0.05),
+    ("random_5pct_seed113", 1554, 113, 0.05),
+    ("random_10pct_seed121", 3107, 121, 0.10),
+    ("random_10pct_seed122", 3107, 122, 0.10),
+    ("random_10pct_seed123", 3107, 123, 0.10),
+    ("random_10pct_seed301", 3107, 301, 0.10),  # proxy manifest (not a floor)
+]
+
+
+@pytest.mark.parametrize("stem,k,seed,fraction", SWEPT)
+def test_swept_and_proxy_manifests_match_regeneration_byte_for_byte(
+        stem, k, seed, fraction, train_ids_sorted):
+    txt_path = SUBSETS_DIR / f"{stem}.txt"
+    chosen = mrs.sample_ids(train_ids_sorted, k, seed)
+    assert txt_path.read_text(encoding="utf-8") == "\n".join(chosen) + "\n"
+
+
+@pytest.mark.parametrize("stem,k,seed,fraction", SWEPT)
+def test_swept_and_proxy_manifests_respect_split_laws(stem, k, seed, fraction):
+    val_ids = load_id_list(SUBSETS_DIR / "splits" / "val_ids.txt")
+    manifest = set(load_id_list(SUBSETS_DIR / f"{stem}.txt"))
+    assert len(manifest) == k
+    assert manifest.isdisjoint(val_ids)               # val NEVER sampled (§2.5)
+
+
+@pytest.mark.parametrize("stem,k,seed,fraction", SWEPT)
+def test_swept_and_proxy_characterization_json(stem, k, seed, fraction):
+    char = json.loads((SUBSETS_DIR / f"{stem}.json").read_text(encoding="utf-8"))
+    assert char["selector"] == "random"
+    assert char["k"] == k and char["subset_seed"] == seed
+    assert abs(char["fraction"] - fraction) < 1e-12
+    assert char["universe_size"] == UNIVERSE
+    assert char["pool"] == "subsets/splits/train_ids.txt"
+
+
+@pytest.mark.parametrize("stem,k,seed,fraction", SWEPT)
+def test_swept_realized_hours_sane(stem, k, seed, fraction):
+    char = json.loads((SUBSETS_DIR / f"{stem}.json").read_text(encoding="utf-8"))
+    if fraction == 0.05:
+        assert 0.8 < char["realized_hours"] < 2.5     # 5% ≈ 1.5 h
+    else:
+        assert 1.5 < char["realized_hours"] < 5.0     # 10% ≈ 3 h
+    assert char["realized_hours"] > 0
+
+
 # ------------------------------------------- index resolution (paths layer) ----
 
 def test_index_resolution_uses_paths_layer_under_any_cwd(tmp_path, monkeypatch):

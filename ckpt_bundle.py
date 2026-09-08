@@ -86,6 +86,9 @@ class BundleCallback(pl.Callback):
         for uid, v in data["train"]:
             rows.append({"epoch": epoch, "split": "train", "utterance_id": uid,
                          "metric": "loss", "value": float(v)})
+        for uid, v in data.get("train_el2n", []):     # proxy runs only (gated)
+            rows.append({"epoch": epoch, "split": "train", "utterance_id": uid,
+                         "metric": "el2n", "value": float(v)})
         if data["train_drops"]:
             rows.append({"epoch": epoch, "split": "train", "utterance_id": None,
                          "metric": "dropped_utts", "value": float(data["train_drops"])})

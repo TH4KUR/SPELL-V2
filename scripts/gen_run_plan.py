@@ -69,6 +69,24 @@ PLANS: dict[str, list[tuple]] = {
         (5, "track_b", "subsets/random_25pct_seed105.txt", 105,
          "configs/pilot_25pct_random_x2seeds.yaml", 1),
     ],
+    # P2 proxy run (2026-09-08): the SHARED 10% proxy model behind loss-ranking,
+    # EL2N, anti-selection and the LESS trajectory (§3.19 era). One task; seed
+    # 301 is the manifest identity (subset_seed), train_seed stays the frozen
+    # constant from the config. el2n logging rides the bundle, not W&B.
+    "slurm/run_plan_p2_proxy.tsv": [
+        (0, "track_b", "subsets/random_10pct_seed301.txt", 301,
+         "configs/proxy_10pct.yaml", 1),
+    ],
+}
+
+# Per-plan banner APPENDICES (rendered after the shared BANNER; plans without
+# an entry are byte-identical to the pre-appendix renderer).
+EXTRA_BANNER: dict[str, tuple[str, ...]] = {
+    "slurm/run_plan_p2_proxy.tsv": (
+        "# PROXY run — NOT a benchmark condition: same frozen HPs (track_b.yaml),",
+        "# 20 epochs, logging.el2n_log=true (metrics.parquet-only, §3.17). Its",
+        "# bundle feeds scripts/score_proxy.py -> scores/proxy_scores.parquet.",
+    ),
 }
 
 
@@ -100,7 +118,7 @@ def render(plan_key: str) -> str:
     """Deterministic file bytes for a known plan (banner + header + sorted rows)."""
     rows = PLANS[plan_key]
     validate_rows(rows)
-    lines = [*BANNER, HEADER]
+    lines = [*BANNER, *EXTRA_BANNER.get(plan_key, ()), HEADER]
     lines += ["\t".join(str(f) for f in row)
               for row in sorted(rows, key=lambda r: int(r[0]))]
     return "\n".join(lines) + "\n"

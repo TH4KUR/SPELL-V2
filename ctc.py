@@ -47,6 +47,26 @@ def input_length_keep_mask(tok_lengths: Tensor, tgt_lengths: Tensor) -> Tensor:
     return tok_lengths >= tgt_lengths
 
 
+def el2n_per_utt(log_probs: Tensor, out_lengths: Tensor) -> Tensor:
+    """Per-utterance EL2N [B] — the disclosed CTC adaptation of Paul et al.
+    2021 (error-L2-norm): mean over VALID output frames of
+    ‖softmax(logp) − onehot(argmax)‖₂, i.e. how far the frame distribution sits
+    from its own best path. Proxy-model logging only (cfg ``logging.el2n_log``);
+    callers run it under no_grad / detach before storing.
+
+    log_probs: [T, B, V] (the ctc_loss layout); out_lengths: [B] valid frames —
+    frames beyond them never contribute (§2.4 pad law)."""
+    lp = log_probs.transpose(0, 1)                       # [B, T, V]
+    probs = lp.exp()
+    best = lp.argmax(dim=-1)                             # [B, T] (same path greedy uses)
+    onehot = F.one_hot(best, lp.size(-1)).to(probs.dtype)
+    err = (probs - onehot).norm(dim=-1)                  # [B, T]
+    frames = torch.arange(err.size(1), device=err.device)
+    mask = frames.unsqueeze(0) < out_lengths.to(err.device).unsqueeze(1)
+    denom = out_lengths.to(err.device).clamp(min=1).to(err.dtype)
+    return (err * mask).sum(dim=1) / denom
+
+
 def greedy_decode(log_probs: Tensor, lengths: Tensor, vocab: CharVocab) -> list[str]:
     """Greedy CTC decoding → list of strings, one per batch row."""
     best_ids = log_probs.argmax(dim=-1)              # [B,T]

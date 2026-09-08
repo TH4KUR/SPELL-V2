@@ -1,0 +1,11 @@
+# PROXY model config (P2, 2026-09-08) — the shared 10%-subset model behind
+# loss-ranking, EL2N, anti-selection and the LESS trajectory (§3.19 era).
+# NOT a benchmark condition: hyperparameters stay the FROZEN track_b.yaml set
+# (no per-subset tuning, §3.2); the only deltas are the epoch budget (equal to
+# every other run) and the proxy-only per-utterance EL2N logging, which never
+# touches the W&B surface (§3.17 — metrics.parquet rows only).
+base: track_b.yaml
+training:
+  n_epochs: 20
+logging:
+  el2n_log: true

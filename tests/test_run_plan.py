@@ -195,3 +195,18 @@ def test_gen_run_plan_check_cli_is_green():
                            "--check"], capture_output=True, text=True,
                           cwd=str(PROJECT_ROOT))
     assert proc.returncode == 0, proc.stderr
+
+
+def test_proxy_plan_single_row_frozen_identity():
+    """P2 proxy run (§3.19 era): ONE task on the shared 10% manifest (seed 301),
+    the frozen Track B HPs with 20 epochs + el2n_log — the score feed for
+    lossrank/el2n/anti/LESS, not a benchmark condition."""
+    import yaml
+
+    rows = grp.parse_plan(PROJECT_ROOT / "slurm" / "run_plan_p2_proxy.tsv")
+    assert rows == [("0", "track_b", "subsets/random_10pct_seed301.txt", "301",
+                     "configs/proxy_10pct.yaml", "1")]
+    cfg = yaml.safe_load((PROJECT_ROOT / "configs" / "proxy_10pct.yaml").read_text())
+    assert cfg["base"] == "track_b.yaml"
+    assert cfg["training"]["n_epochs"] == 20
+    assert cfg["logging"]["el2n_log"] is True
