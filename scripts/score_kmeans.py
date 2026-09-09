@@ -67,25 +67,21 @@ def _collect_train_records() -> list[str]:
     return sorted(r.utterance_id for r in recs if r.utterance_id in train)
 
 
-def _resolve_token_path(utterance_id: str) -> Path:
-    """paths-layer resolution keyed on (video_id, stem) — no path arithmetic."""
-    video_id, stem = utterance_id.split("/")
-    return data_paths.current().tokens_relpath(video_id, stem)
-
-
-def _load_stream0(utterance_id: str) -> np.ndarray:
-    path = _resolve_token_path(utterance_id)
+def _load_stream0(rec) -> np.ndarray:
+    path = data_paths.resolve_token_path(rec)          # single path authority (§10 item 4)
     tokens = torch.load(path, map_location="cpu", weights_only=True)
     return np.asarray(tokens)[0]
 
 
-def _build_features(ids: list[str]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """(features [n, codebook_size] float32, entropies, n_hops) — in-job only."""
+def _build_features(ids: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    """(features [n, codebook_size] float32, entropies) — in-job only."""
     cb = codebook_size()
+    p = load_paths()
+    rec_by_id = {r.utterance_id: r for r in load_records(p.index_path, split="trainval")}
     feats = np.zeros((len(ids), cb), dtype=np.float64)
     ents = np.zeros(len(ids), dtype=np.float64)
     for i, uid in enumerate(ids):
-        tokens = _load_stream0(uid)
+        tokens = _load_stream0(rec_by_id[uid])
         feats[i] = histogram(tokens, cb)
         ents[i] = codebook_entropy(feats[i], cb)
         if (i + 1) % 2000 == 0:

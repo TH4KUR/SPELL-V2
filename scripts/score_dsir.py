@@ -47,9 +47,8 @@ def hash_bigram(a: int, b: int) -> int:
     return (a * BIGRAM_HASH_MULT + b) % NGRAM_BUCKETS
 
 
-def _load_stream0(utterance_id: str) -> np.ndarray:
-    video_id, stem = utterance_id.split("/")
-    path = data_paths.current().tokens_relpath(video_id, stem)
+def _load_stream0(rec) -> np.ndarray:
+    path = data_paths.resolve_token_path(rec)          # single path authority (§10 item 4)
     tokens = torch.load(path, map_location="cpu", weights_only=True)
     return np.asarray(tokens)[0]
 
@@ -116,6 +115,7 @@ def _collect_populations():
     population; val is TARGET metadata only (§3.21) and never committed."""
     p = load_paths()
     recs = load_records(p.index_path, split="trainval")
+    rec_by_id = {r.utterance_id: r for r in recs}
     train = load_id_list(Path(p.splits_dir) / "train_ids.txt")
     val = load_id_list(Path(p.splits_dir) / "val_ids.txt")
     train_ids = sorted(r.utterance_id for r in recs if r.utterance_id in train)
@@ -125,11 +125,11 @@ def _collect_populations():
           f"utterances (dim={cb + NGRAM_BUCKETS})", flush=True)
     rows_train, rows_val = [], []
     for i, uid in enumerate(train_ids):
-        rows_train.append(featurize(_load_stream0(uid), cb))
+        rows_train.append(featurize(_load_stream0(rec_by_id[uid]), cb))
         if (i + 1) % 2000 == 0:
             print(f"[dsir] pool features {i + 1}/{len(train_ids)}", flush=True)
     for uid in val_ids:
-        rows_val.append(featurize(_load_stream0(uid), cb))
+        rows_val.append(featurize(_load_stream0(rec_by_id[uid]), cb))
     X_train = sparse.vstack(rows_train, format="csr")
     X_val = sparse.vstack(rows_val, format="csr")
     return train_ids, val_ids, X_train, X_val

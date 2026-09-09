@@ -96,3 +96,31 @@ def test_real_protocol_codebook_constant():
     from config import load_protocol
 
     assert S.codebook_size() == load_protocol().codebook_size == 1024
+
+
+def test_load_stream0_uses_root_joined_path_not_bare_relpath(monkeypatch):
+    """2026-09-09 incident (job 2692024): _load_stream0 called
+    ``paths.current().tokens_relpath(...)`` directly -- a RELATIVE path never
+    joined with the data root -- so torch.load got a bare
+    '<video_id>/<stem>.tokens.pt' and crashed FileNotFoundError on the very
+    first real Ada run. It must go through ``paths.resolve_token_path``
+    (root-joined + existence-checked), never the relpath builder alone."""
+    import paths as data_paths
+
+    sentinel = Path("/fake/data/root/v0/50001.tokens.pt")
+    monkeypatch.setattr(data_paths, "resolve_token_path", lambda rec: sentinel)
+    seen = {}
+
+    def fake_torch_load(path, **kwargs):
+        seen["path"] = path
+        return np.zeros((8, 10), dtype=np.int64)
+
+    monkeypatch.setattr(S.torch, "load", fake_torch_load)
+
+    class FakeRec:
+        utterance_id = "v0/50001"
+        video_id = "v0"
+        stem = "50001"
+
+    S._load_stream0(FakeRec())
+    assert seen["path"] == sentinel
