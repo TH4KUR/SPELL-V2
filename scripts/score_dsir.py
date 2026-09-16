@@ -83,8 +83,18 @@ def featurize(stream: np.ndarray, codebook_size: int) -> sparse.csr_matrix:
     return sparse.csr_matrix((vec, indices, [0, len(vec)]), shape=(1, dim))
 
 
-def fit_importance(X_pool, X_val, l2: float = 1e-4) -> np.ndarray:
-    """Class-balanced logistic fit (zero-init, no intercept) → POOL-row logits.
+def class_weights(y: np.ndarray) -> np.ndarray:
+    """Balanced per-row weights: each class's total weighted mass = n/2."""
+    n = len(y)
+    return np.where(y > 0, n / (2 * max((y > 0).sum(), 1)),
+                    n / (2 * max((y == 0).sum(), 1)))
+
+
+def fit_beta(X_pool, X_val, l2: float = 1e-4) -> np.ndarray:
+    """Class-balanced logistic fit (zero-init, no intercept) → the coefficient
+    vector itself (callers apply it to whatever rows they need logits for —
+    scripts/sweep_dsir_l2.py reuses this to score a held-out split that never
+    entered the fit).
 
     Stable BCE: -(y log σ(z) + (1-y) log(1-σ(z))) = softplus(z) - y·z."""
     X = sparse.vstack([sparse.csr_matrix(X_pool), sparse.csr_matrix(X_val)],
@@ -92,8 +102,7 @@ def fit_importance(X_pool, X_val, l2: float = 1e-4) -> np.ndarray:
     n_pool = sparse.csr_matrix(X_pool).shape[0]
     y = np.concatenate([np.zeros(n_pool), np.ones(X.shape[0] - n_pool)])
     n = X.shape[0]
-    cw = np.where(y > 0, n / (2 * max((y > 0).sum(), 1)),
-                  n / (2 * max((y == 0).sum(), 1)))
+    cw = class_weights(y)
 
     def nll_grad(beta: np.ndarray) -> tuple[float, np.ndarray]:
         z = X @ beta
@@ -106,7 +115,12 @@ def fit_importance(X_pool, X_val, l2: float = 1e-4) -> np.ndarray:
 
     res = minimize(nll_grad, np.zeros(X.shape[1], dtype=float), jac=True,
                    method="L-BFGS-B")
-    beta = res.x
+    return res.x
+
+
+def fit_importance(X_pool, X_val, l2: float = 1e-4) -> np.ndarray:
+    """Class-balanced logistic fit (zero-init, no intercept) → POOL-row logits."""
+    beta = fit_beta(X_pool, X_val, l2=l2)
     return np.asarray(sparse.csr_matrix(X_pool) @ beta).ravel()
 
 

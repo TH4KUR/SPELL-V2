@@ -66,6 +66,28 @@ def test_fit_separable_data_separates_and_deterministic():
     assert (logits_a < 0).all()
 
 
+def test_class_weights_balance_total_mass():
+    y = np.array([0.0, 0.0, 0.0, 1.0])
+    cw = S.class_weights(y)
+    assert cw[y == 0].sum() == pytest.approx(len(y) / 2)
+    assert cw[y == 1].sum() == pytest.approx(len(y) / 2)
+
+
+def test_fit_importance_matches_pool_rows_times_fit_beta():
+    """fit_importance is exactly X_pool @ fit_beta(...) -- the refactor that
+    exposed fit_beta (for scripts/sweep_dsir_l2.py's held-out cross-validation)
+    must not change fit_importance's existing behavior."""
+    X_pool = np.zeros((40, 8))
+    for i in range(40):
+        X_pool[i, 2 + i % 5] = 1.0
+    X_val = np.zeros((10, 8))
+    X_val[:, 1] = 1.0
+    beta = S.fit_beta(X_pool, X_val, l2=1e-4)
+    expected = X_pool @ beta
+    actual = S.fit_importance(X_pool, X_val, l2=1e-4)
+    assert np.allclose(actual, expected)
+
+
 def test_output_schema_train_only_sorted(tmp_path, monkeypatch):
     ids, val_ids = ["v0/2", "v0/1"], ["v1/9"]
     feats_val = np.zeros((1, 8), dtype=np.float32); feats_val[0, 1] = 1.0
