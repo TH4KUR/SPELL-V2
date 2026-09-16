@@ -39,9 +39,13 @@ def codebook_size() -> int:
     return int(load_protocol().codebook_size)
 
 
-def histogram(tokens: np.ndarray, codebook_size: int) -> np.ndarray:
-    """Stream-0 histogram over [0, codebook_size), L1-normalized to sum 1."""
-    stream0 = np.asarray(tokens)[0]
+def histogram(stream0: np.ndarray, codebook_size: int) -> np.ndarray:
+    """L1-normalized histogram of an ALREADY-extracted RVQ-1 (stream 0) code
+    sequence over [0, codebook_size). Callers pass `_load_stream0`'s output
+    directly — do not re-index; a second `[0]` collapses the 1-D code array
+    to a single scalar (numpy's "too small depth" error, 2026-09-16 incident:
+    score_kmeans never having run against real Ada tokens before that day)."""
+    stream0 = np.asarray(stream0)
     bad = (stream0 < 0) | (stream0 >= codebook_size)
     if bad.any():
         raise ValueError(f"stream 0 carries out-of-range codes: "

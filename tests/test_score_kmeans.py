@@ -28,16 +28,40 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 import score_kmeans as S  # noqa: E402
 
 
-def test_histogram_l1_normalized_and_stream0_only():
-    """[8, T] tokens → histogram of stream 0 over [0, codebook_size), summing
-    to 1.0; streams 1-7 never enter the features."""
+def test_histogram_l1_normalized_over_stream0_codes():
+    """Given an ALREADY-extracted RVQ-1 (stream 0) code sequence (histogram's
+    actual contract — `_build_features` passes `_load_stream0`'s output
+    straight through), produces an L1-normalized histogram over
+    [0, codebook_size). histogram() must NOT re-index a second `[0]` — that
+    collapses the 1-D array to a scalar and crashes np.bincount with "object
+    of too small depth for desired array" (2026-09-16 incident, job 2698949:
+    score_kmeans's first-ever run against real Ada tokens)."""
     rng = np.random.default_rng(0)
-    tokens = rng.integers(0, 64, size=(8, 30))
-    hist = S.histogram(tokens, codebook_size=64)
+    stream0 = rng.integers(0, 64, size=30)
+    hist = S.histogram(stream0, codebook_size=64)
     assert hist.shape == (64,)
     assert hist.sum() == pytest.approx(1.0)
-    expected = np.bincount(tokens[0], minlength=64) / 30.0
+    expected = np.bincount(stream0, minlength=64) / 30.0
     assert np.allclose(hist, expected)
+
+
+def test_build_features_does_not_double_extract_stream0(monkeypatch):
+    """End-to-end seam test for the exact 2698949 failure: _build_features
+    feeds _load_stream0's output straight into histogram() with no second
+    [0] anywhere in between."""
+    import paths as data_paths
+
+    full = np.array([[1, 2, 3, 2, 1]] * 8)   # any [8, T]-shaped stand-in
+    monkeypatch.setattr(S, "codebook_size", lambda: 64)
+    monkeypatch.setattr(data_paths, "resolve_token_path", lambda rec: "unused")
+    monkeypatch.setattr(S.torch, "load", lambda path, **kw: full)
+    monkeypatch.setattr(
+        S, "load_records",
+        lambda index_path, split: [type("R", (), {"utterance_id": "v0/1"})()])
+
+    feats, ents = S._build_features(["v0/1"])
+    assert feats.shape == (1, 64)
+    assert feats[0].sum() == pytest.approx(1.0)
 
 
 def test_codebook_entropy_hand_case():
