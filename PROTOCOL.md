@@ -164,6 +164,46 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     consequence, disclosed in the paper: val-WER gate readings for
     val-targeted selector cells are optimistic-confounded; final-eval claims
     are unaffected.
+22. **DSIR 72h go/no-go — RESOLVED GO, weak effect (2026-09-08 to 2026-09-17)**:
+    the risk-ordered roster build (§7) carried a 72-hour go/no-go on DSIR —
+    if it were not "demonstrably working" within 72h of commit b47b334, it
+    would be dropped rather than debugged indefinitely. Timeline and finding:
+    (a) the formal run (`l2=1e-4`) printed `weight_spread` (CV of
+    `exp(logit)` over the fitted POOL rows) = 0.0295 — read at face value
+    against the informal "near-uniform ⇒ drop" framing, this looked like a
+    NO-GO; (b) a single-point ad-hoc check (`l2=1e-6`) raised it to 0.4571,
+    proving the regularization dial mattered, but `weight_spread` is a
+    TRAINING-set statistic that can rise from EITHER real signal being
+    unlocked OR the fit starting to memorize idiosyncrasies of the ~31k
+    fitting rows in this 66,560-dim hashed feature space — indistinguishable
+    from that number alone; (c) `scripts/sweep_dsir_l2.py` (a held-out
+    cross-validation sweep, NOT part of the roster pipeline — see its module
+    docstring) settled it: splitting pool+val with a fixed deterministic
+    80/20 rule (§3.20-style, no RNG), fitting on the 80%, and scoring the
+    held-out 20% across `l2 ∈ {1e-6 … 1e-3}` gave `held_out_auc` in a narrow,
+    FLAT band of **0.565–0.570 across the entire three-decade sweep** — while
+    `weight_spread` swung two orders of magnitude (0.0036 to 0.4571) over the
+    same range. **Conclusion: `weight_spread`'s wide swing was overfitting
+    noise, not signal being unlocked — the genuine, generalizable signal
+    (AUC≈0.57) was present at EVERY tested `l2`, including the original
+    `l2=1e-4`.** At n_check_pool=5,813 / n_check_val=402, chance-level AUC's
+    standard error is ≈0.015 (Wilcoxon/Mann-Whitney variance formula
+    `(n1+n2+1)/(12·n1·n2)`), so 0.565–0.570 sits ~4.4–4.7 SE above 0.5 —
+    real, reproducible, but WEAK (0.57 is far from the 0.9+ that would
+    indicate a strongly distinct target distribution). **Verdict: GO, with a
+    standing weak-effect disclosure** — DSIR is retained in the roster at
+    its already-shipped `l2=1e-4` (`scores/dsir_weights.parquet`, unchanged,
+    no re-run needed), but any paper claim must state the effect size
+    plainly rather than imply strong separation; a null/near-null downstream
+    Track A/B result for DSIR would be UNSURPRISING given this AUC and
+    remains within the pre-registered H2c ("everything ties") outcome
+    (RESEARCH.md §9), not evidence of a pipeline bug. **Standing lesson for
+    any future selector go/no-go**: judge by HELD-OUT discriminative
+    performance (`sweep_dsir_l2.py`'s method generalizes to any importance-
+    weighting selector), never by a raw training-set statistic like
+    `weight_spread` alone — the latter conflates coefficient SCALE (which
+    regularization freely trades off) with ranking QUALITY (which is what
+    subset selection actually consumes).
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
@@ -452,7 +492,13 @@ are irreconcilable in one pip resolve, and amended §5.5 with the
 confirmed onnxruntime==1.18.1 crashes at runtime under numpy>=2.0 (not just
 its declared pin) and resolved it by dropping onnxruntime entirely —
 `dnsmos_model.DNSMOSTorch` is a verified pure-PyTorch port of the vendored
-ONNX graph, `requirements.lock` no longer carries onnxruntime at all.
+ONNX graph, `requirements.lock` no longer carries onnxruntime at all;
+`dsir-l2-goNoGo` (2026-09-17) added §3.22, resolving the DSIR 72h go/no-go
+GO with a weak-effect disclosure — `scripts/sweep_dsir_l2.py`'s held-out
+cross-validation showed `weight_spread`'s dramatic swing across `l2` was
+overfitting noise, not real signal, while the genuine held-out AUC
+(≈0.57, statistically real but weak) held flat at every tested `l2`
+including the original formal `l2=1e-4` (no re-run needed).
 Earlier wording remains in git history.
 
 ## 10. Known issues & permanent policies
