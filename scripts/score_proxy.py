@@ -19,6 +19,7 @@ import argparse
 import math
 import re
 import sys
+import time
 from functools import partial
 from pathlib import Path
 
@@ -90,8 +91,15 @@ def _preflight(recs, k: int = 50) -> None:
     data_paths.preflight_resolve(recs, k=min(k, len(recs)), kind="tokens")
 
 
-def _score_one_lit(lit, ids: list[str]) -> dict[str, tuple[float, float]]:
-    """Inference pass over the train pool with ONE lit checkpoint."""
+def _score_one_lit(lit, ids: list[str], report_every: int = 2000,
+                   on_progress=None) -> dict[str, tuple[float, float]]:
+    """Inference pass over the train pool with ONE lit checkpoint.
+
+    `on_progress(done, total, chunk_s, elapsed_s)` (if given) fires every
+    time at least `report_every` NEW rows have landed since the last report
+    (and once more at the very end) — PROTOCOL §3.24 per-unit timing, at the
+    finer WITHIN-checkpoint granularity (this is where most of a single
+    checkpoint's wall-clock goes, not just at the "checkpoint done" level)."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
     lit = lit.to(device).eval()
     p = load_paths()
@@ -106,6 +114,10 @@ def _score_one_lit(lit, ids: list[str]) -> dict[str, tuple[float, float]]:
                     collate_fn=collate)
     input_stream = int(lit.cfg["model"].get("input_stream", 0))
     out: dict[str, tuple[float, float]] = {}
+    n_total = len(recs)
+    t_start = time.monotonic()
+    t_prev = t_start
+    reported = 0
     with torch.no_grad():
         for batch in dl:
             keep = ctc_lib.input_length_keep_mask(batch["lengths"],
@@ -127,16 +139,81 @@ def _score_one_lit(lit, ids: list[str]) -> dict[str, tuple[float, float]]:
             for uid, lv, ev in zip(uids, loss_vec.cpu().tolist(),
                                    el2n_vec.cpu().tolist()):
                 out[uid] = (float(lv), float(ev))
+            if on_progress is not None and (
+                    len(out) - reported >= report_every or len(out) >= n_total):
+                now = time.monotonic()
+                on_progress(len(out), n_total, now - t_prev, now - t_start)
+                t_prev = now
+                reported = len(out)
     return out
 
 
-def _score_all(lits, ids: list[str]) -> list[dict]:
-    rows_per_ckpt = [_score_one_lit(lit, ids) for lit in lits]
+def _score_all(lits, ids: list[str], report_every: int = 2000,
+               on_ckpt_done=None) -> list[dict]:
+    """`on_ckpt_done(ckpt_i, n_ckpts, done, total, chunk_s, elapsed_s)` (if
+    given) is threaded down into each checkpoint's own within-checkpoint
+    progress callback, so the caller sees BOTH which checkpoint is in
+    flight and how far it has gotten through the train pool — previously
+    this was `[_score_one_lit(lit, ids) for lit in lits]` with zero
+    visibility across the whole pass."""
+    rows_per_ckpt = []
+    n_ckpts = len(lits)
+    for i, lit in enumerate(lits, start=1):
+        def _progress(done, total, chunk_s, elapsed_s, _i=i):
+            if on_ckpt_done is not None:
+                on_ckpt_done(_i, n_ckpts, done, total, chunk_s, elapsed_s)
+
+        rows_per_ckpt.append(_score_one_lit(lit, ids, report_every=report_every,
+                                            on_progress=_progress))
     means = _mean_across(rows_per_ckpt)
     rows = [{"utterance_id": uid, "loss_mean": lv, "el2n_mean": ev,
              "n_ckpts": len(rows_per_ckpt)}
             for uid, (lv, ev) in means.items()]
     return sorted(rows, key=lambda r: r["utterance_id"])
+
+
+def _wandb_init(*, project: str, entity: str | None, mode: str, job_id: str,
+                bundle: str, late_frac: float, n_recs: int):
+    """Opens the W&B run EARLY (before the checkpoint pass starts), per
+    PROTOCOL §3.23/§3.24 — this scorer's sibling (score_dnsmos.py) has
+    already run into its SLURM --time wall with zero W&B trace of progress;
+    this closes the identical gap here."""
+    import wandb
+
+    run = wandb.init(project=project, entity=entity, mode=mode,
+                     job_type="proxy_scoring",
+                     name=f"proxy-scoring-{job_id}",
+                     dir=str(Path(__file__).resolve().parents[1] / "outputs" / "wandb"),
+                     tags=["proxy", "roster-4"])
+    wandb.config.update({"bundle": str(bundle), "late_frac": late_frac,
+                        "n_recs": n_recs})
+    return run
+
+
+def _log_scoring_progress(ckpt_i: int, n_ckpts: int, done: int, total: int,
+                          chunk_s: float, elapsed_s: float) -> None:
+    import wandb
+
+    wandb.log({"proxy_scoring/ckpt": ckpt_i,
+              "proxy_scoring/ckpts_total": n_ckpts,
+              "proxy_scoring/utts_done": done,
+              "proxy_scoring/utts_total": total,
+              "proxy_scoring/chunk_duration_s": chunk_s,
+              "proxy_scoring/elapsed_s": elapsed_s})
+    print(f"[proxy] ckpt {ckpt_i}/{n_ckpts}: {done}/{total} utterances scored "
+          f"(+{chunk_s:.0f}s, {elapsed_s:.0f}s total elapsed)", flush=True)
+
+
+def log_final_summary_to_wandb(df: pd.DataFrame) -> None:
+    """Logged onto the ALREADY-OPEN run from _wandb_init — composes with the
+    live per-chunk progress above rather than replacing it."""
+    import wandb
+
+    wandb.run.summary["proxy_scoring/loss_mean_min"] = float(df["loss_mean"].min())
+    wandb.run.summary["proxy_scoring/loss_mean_max"] = float(df["loss_mean"].max())
+    wandb.run.summary["proxy_scoring/el2n_mean_min"] = float(df["el2n_mean"].min())
+    wandb.run.summary["proxy_scoring/el2n_mean_max"] = float(df["el2n_mean"].max())
+    wandb.run.summary["proxy_scoring/n_rows"] = int(len(df))
 
 
 def main(argv=None) -> int:
@@ -148,26 +225,46 @@ def main(argv=None) -> int:
     ap.add_argument("--out", type=Path, default=root / "scores" / "proxy_scores.parquet")
     ap.add_argument("--late-frac", type=float, default=0.75,
                     help="keep ckpts with epoch >= ceil(max_epoch * late_frac)")
+    ap.add_argument("--report-every", type=int, default=2000,
+                    help="progress-log granularity in utterances scored")
+    ap.add_argument("--wandb-project", default="spell-rq2")
+    ap.add_argument("--wandb-entity", default=None)
+    ap.add_argument("--wandb-mode", choices=["online", "offline", "disabled"],
+                    default="online")
+    ap.add_argument("--job-id", default="local",
+                    help="SLURM job id or other run tag for the W&B run name")
     args = ap.parse_args(argv)
 
-    enforce_gpu_policy()
-    ckpts = _late_ckpts(args.bundle, args.late_frac)
-    print(f"[proxy] late ckpts: {[Path(c).name for c in ckpts]}", flush=True)
     ids = _collect_train_records()
-    recs = [r for r in load_records(load_paths().index_path, split="trainval")
-            if r.utterance_id in set(ids)]
-    _preflight(recs, k=50)
-    lits = [_load_lit(c) for c in ckpts]
-    rows = _score_all(lits, ids)
-    df = pd.DataFrame(rows, columns=SCORE_COLUMNS
-                      ).sort_values("utterance_id", kind="mergesort"
-                                    ).reset_index(drop=True)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(args.out, index=False)
-    print(f"[proxy] wrote {args.out}: rows={len(df)} "
-          f"(loss_mean min={df['loss_mean'].min():.4f} "
-          f"max={df['loss_mean'].max():.4f})")
-    return 0
+
+    # opened BEFORE the expensive pass, not after -- so partial progress
+    # (and a crash, or a SLURM --time wall) are both visible in W&B
+    run = _wandb_init(project=args.wandb_project, entity=args.wandb_entity,
+                      mode=args.wandb_mode, job_id=args.job_id,
+                      bundle=str(args.bundle), late_frac=args.late_frac,
+                      n_recs=len(ids))
+    try:
+        enforce_gpu_policy()
+        ckpts = _late_ckpts(args.bundle, args.late_frac)
+        print(f"[proxy] late ckpts: {[Path(c).name for c in ckpts]}", flush=True)
+        recs = [r for r in load_records(load_paths().index_path, split="trainval")
+                if r.utterance_id in set(ids)]
+        _preflight(recs, k=50)
+        lits = [_load_lit(c) for c in ckpts]
+        rows = _score_all(lits, ids, report_every=args.report_every,
+                          on_ckpt_done=_log_scoring_progress)
+        df = pd.DataFrame(rows, columns=SCORE_COLUMNS
+                          ).sort_values("utterance_id", kind="mergesort"
+                                        ).reset_index(drop=True)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(args.out, index=False)
+        print(f"[proxy] wrote {args.out}: rows={len(df)} "
+              f"(loss_mean min={df['loss_mean'].min():.4f} "
+              f"max={df['loss_mean'].max():.4f})")
+        log_final_summary_to_wandb(df)
+        return 0
+    finally:
+        run.finish()
 
 
 if __name__ == "__main__":

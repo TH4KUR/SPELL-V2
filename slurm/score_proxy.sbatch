@@ -15,7 +15,10 @@
 # Proxy-trajectory scorer (roster #4 feed) — GPU job. Late-checkpoint CTC-loss
 # and EL2N inference over the full train pool, feeding the deterministic
 # lossrank/anti/el2n selectors (§3.20). Writes scores/proxy_scores.parquet
-# INTO the clone; commit-from-Ada per §5 item 12 afterwards.
+# INTO the clone; commit-from-Ada per §5 item 12 afterwards. Logs to W&B
+# LIVE (job_type=proxy_scoring): per-checkpoint AND within-checkpoint
+# progress every --report-every (default 2000) utterances, each report
+# carrying its own chunk duration (§3.24), not just cumulative elapsed.
 #
 # Usage (from ~/spell/repo):
 #   sbatch --export=ALL,SPELL_PROXY_BUNDLE=runs/track_b/<proxy_run_id> \
@@ -39,5 +42,6 @@ source ~/envs/spell/bin/activate
 python scripts/check_storage.py --strict
 python -c "import hardware_guard; info = hardware_guard.assert_gpu(); print('[score_proxy] gpu:', info)"
 
-python scripts/score_proxy.py --bundle "$BUNDLE" --out scores/proxy_scores.parquet
-echo "DONE score_proxy — commit scores/ from this clone (§5 item 12)."
+python scripts/score_proxy.py --bundle "$BUNDLE" --out scores/proxy_scores.parquet \
+    --job-id "${SLURM_JOB_ID}"
+echo "DONE score_proxy — check the W&B run, then commit scores/ from this clone (§5 item 12)."

@@ -16,6 +16,7 @@ Laws pinned here:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -117,14 +118,92 @@ def test_train_pool_only_and_sorted_output(tmp_path, monkeypatch):
         {"utterance_id": "v0/1", "sig_raw": 1.5, "bak_raw": 2.5, "ovr_raw": 3.5,
          "sig_mos": 1.5, "bak_mos": 2.5, "ovr_mos": 3.5, "n_hops": 1},
     ]
-    monkeypatch.setattr(S, "_score_all", lambda recs, model, workers: fake_rows)
+    monkeypatch.setattr(S, "_score_all", lambda recs, model, workers, **kwargs: fake_rows)
     out = tmp_path / "scores" / "out.parquet"
-    rc = S.main(["--out", str(out), "--workers", "1"])
+    rc = S.main(["--out", str(out), "--workers", "1", "--wandb-mode", "disabled"])
     assert rc == 0
     df = pd.read_parquet(out)
     assert list(df["utterance_id"]) == ["v0/1", "v0/2"]      # sorted
     assert list(df.columns) == ["utterance_id", "sig_raw", "bak_raw", "ovr_raw",
                                 "sig_mos", "bak_mos", "ovr_mos", "n_hops"]
+
+
+# ------------------------------------------------------------- progress/wandb
+
+def test_score_all_reports_progress_every_report_every_rows_and_at_end(monkeypatch, tmp_path):
+    """PROTOCOL §3.23/§3.24: this scorer's ProcessPoolExecutor.map used to be
+    consumed via a blind list(...) with zero visibility until everything was
+    done. on_progress must fire every `report_every` NEW rows, plus once
+    more at the very end even if that doesn't land on a clean multiple."""
+    recs = [_rec(f"v0/{i}") for i in range(5)]
+    monkeypatch.setattr(S, "resolve_audio_for", lambda rec: tmp_path / "a.flac")
+    monkeypatch.setattr(S, "load_session", lambda model_path: object())
+
+    def fake_score_one(task):
+        uid, _ = task
+        return {"utterance_id": uid, "sig_raw": 1.0, "bak_raw": 2.0, "ovr_raw": 3.0,
+                "sig_mos": 1.0, "bak_mos": 2.0, "ovr_mos": 3.0, "n_hops": 1}
+
+    monkeypatch.setattr(S, "_score_one", fake_score_one)
+
+    seen = []
+    rows = S._score_all(recs, "fake-model.pt", workers=1, report_every=2,
+                        on_progress=lambda *a: seen.append(a))
+    assert len(rows) == 5
+    assert [s[0] for s in seen] == [2, 4, 5]     # every 2, plus once more at the end (5)
+    assert all(s[1] == 5 for s in seen)
+
+
+def test_score_all_progress_reports_chunk_duration_not_cumulative(monkeypatch, tmp_path):
+    """Mirrors score_less.py's per-checkpoint proof: the callback's chunk_s
+    must be THAT chunk's own duration, not the running total -- otherwise a
+    single slow/stuck stretch (exactly what happened on the near-timeout
+    Ada job that prompted this retrofit) is averaged away and invisible."""
+    recs = [_rec(f"v0/{i}") for i in range(3)]
+    monkeypatch.setattr(S, "resolve_audio_for", lambda rec: tmp_path / "a.flac")
+    monkeypatch.setattr(S, "load_session", lambda model_path: object())
+    sleep_schedule = [0.05, 0.02, 0.08]
+    call_index = {"i": 0}
+
+    def fake_score_one(task):
+        uid, _ = task
+        time.sleep(sleep_schedule[call_index["i"]])
+        call_index["i"] += 1
+        return {"utterance_id": uid, "sig_raw": 1.0, "bak_raw": 2.0, "ovr_raw": 3.0,
+                "sig_mos": 1.0, "bak_mos": 2.0, "ovr_mos": 3.0, "n_hops": 1}
+
+    monkeypatch.setattr(S, "_score_one", fake_score_one)
+
+    seen = []
+    S._score_all(recs, "fake-model.pt", workers=1, report_every=1,
+                on_progress=lambda done, total, chunk_s, elapsed_s:
+                    seen.append((done, total, chunk_s, elapsed_s)))
+    assert [s[0] for s in seen] == [1, 2, 3]
+    for idx, (_, _, chunk_s, _) in enumerate(seen):
+        assert chunk_s == pytest.approx(sleep_schedule[idx], abs=0.05)
+    assert seen[0][3] < seen[1][3] < seen[2][3]      # elapsed strictly increases
+
+
+def test_wandb_init_disabled_mode_runs_without_network():
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", model_path="fake.pt", workers=1, n_recs=5)
+    run.finish()
+
+
+def test_log_scoring_progress_disabled_mode_runs_without_network():
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", model_path="fake.pt", workers=1, n_recs=5)
+    S._log_scoring_progress(2000, 29064, 45.0, 45.0)
+    run.finish()
+
+
+def test_log_final_summary_to_wandb_disabled_mode_runs_without_network():
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", model_path="fake.pt", workers=1, n_recs=2)
+    df = pd.DataFrame([{"utterance_id": "v0/1", "ovr_mos": 3.0},
+                       {"utterance_id": "v0/2", "ovr_mos": 3.5}])
+    S.log_final_summary_to_wandb(df)
+    run.finish()
 
 
 def test_real_model_runs_end_to_end(tmp_path):

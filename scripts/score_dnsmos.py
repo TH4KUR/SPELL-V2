@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -134,20 +135,88 @@ def _preflight(recs, k: int = 50) -> None:
     data_paths.preflight_resolve(recs, k=min(k, len(recs)), kind="audio")
 
 
-def _score_all(recs, model_path: str | Path, workers: int) -> list[dict]:
+def _score_all(recs, model_path: str | Path, workers: int,
+               report_every: int = 2000, on_progress=None) -> list[dict]:
+    """`on_progress(done, total, chunk_s, elapsed_s)` (if given) fires every
+    time at least `report_every` NEW rows have landed since the last report
+    (and once more at the very end) — PROTOCOL §3.24: this is a long
+    ProcessPoolExecutor.map over ~29k utterances with previously ZERO
+    visibility between "started" and "done"; `chunk_s` is that chunk's OWN
+    duration, not just the cumulative `elapsed_s`, so a slow/stuck stretch
+    is visible on its own rather than averaged away."""
     tasks = [(r.utterance_id, str(resolve_audio_for(r))) for r in recs]
+    n_total = len(tasks)
+    t_start = time.monotonic()
+    t_prev = t_start
+    rows: list[dict] = []
+    reported = 0
+
+    def _maybe_report() -> None:
+        nonlocal t_prev, reported
+        if on_progress is None:
+            return
+        if len(rows) - reported >= report_every or len(rows) >= n_total:
+            now = time.monotonic()
+            on_progress(len(rows), n_total, now - t_prev, now - t_start)
+            t_prev = now
+            reported = len(rows)
+
     if workers <= 1:
         global _SESSION
         _SESSION = load_session(model_path)
-        rows = [_score_one(t) for t in tasks]
+        for t in tasks:
+            rows.append(_score_one(t))
+            _maybe_report()
     else:
         def init():
             global _SESSION
             _SESSION = load_session(model_path)
 
         with ProcessPoolExecutor(max_workers=workers, initializer=init) as ex:
-            rows = list(ex.map(_score_one, tasks, chunksize=16))
+            for row in ex.map(_score_one, tasks, chunksize=16):
+                rows.append(row)
+                _maybe_report()
     return sorted(rows, key=lambda r: r["utterance_id"])
+
+
+def _wandb_init(*, project: str, entity: str | None, mode: str, job_id: str,
+                model_path: str, workers: int, n_recs: int):
+    """Opens the W&B run EARLY (before the ProcessPoolExecutor pass starts),
+    per PROTOCOL §3.23/§3.24 — otherwise a job that runs into its SLURM
+    --time wall (this scorer has done exactly that) leaves zero trace of
+    how far it got."""
+    import wandb
+
+    run = wandb.init(project=project, entity=entity, mode=mode,
+                     job_type="dnsmos_scoring",
+                     name=f"dnsmos-scoring-{job_id}",
+                     dir=str(Path(__file__).resolve().parents[1] / "outputs" / "wandb"),
+                     tags=["dnsmos", "roster-1"])
+    wandb.config.update({"model_path": str(model_path), "workers": workers,
+                        "n_recs": n_recs})
+    return run
+
+
+def _log_scoring_progress(done: int, total: int, chunk_s: float, elapsed_s: float) -> None:
+    import wandb
+
+    wandb.log({"dnsmos_scoring/utts_done": done,
+              "dnsmos_scoring/utts_total": total,
+              "dnsmos_scoring/chunk_duration_s": chunk_s,
+              "dnsmos_scoring/elapsed_s": elapsed_s})
+    print(f"[dnsmos] {done}/{total} utterances scored "
+          f"(+{chunk_s:.0f}s, {elapsed_s:.0f}s total elapsed)", flush=True)
+
+
+def log_final_summary_to_wandb(df: pd.DataFrame) -> None:
+    """Logged onto the ALREADY-OPEN run from _wandb_init — composes with the
+    live per-chunk progress above rather than replacing it."""
+    import wandb
+
+    wandb.run.summary["dnsmos_scoring/ovr_mos_min"] = float(df["ovr_mos"].min())
+    wandb.run.summary["dnsmos_scoring/ovr_mos_max"] = float(df["ovr_mos"].max())
+    wandb.run.summary["dnsmos_scoring/ovr_mos_mean"] = float(df["ovr_mos"].mean())
+    wandb.run.summary["dnsmos_scoring/n_rows"] = int(len(df))
 
 
 def main(argv=None) -> int:
@@ -160,25 +229,46 @@ def main(argv=None) -> int:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int, default=None,
                     help="smoke: score only the first N utterances")
+    ap.add_argument("--report-every", type=int, default=2000,
+                    help="progress-log granularity in utterances scored")
+    ap.add_argument("--wandb-project", default="spell-rq2")
+    ap.add_argument("--wandb-entity", default=None)
+    ap.add_argument("--wandb-mode", choices=["online", "offline", "disabled"],
+                    default="online")
+    ap.add_argument("--job-id", default="local",
+                    help="SLURM job id or other run tag for the W&B run name")
     args = ap.parse_args(argv)
 
     recs = _collect_train_records()
     if args.limit is not None:
         recs = recs[: args.limit]
-    print(f"[dnsmos] scoring {len(recs)} train-pool utterances "
-          f"model={args.model.name}", flush=True)
-    _preflight(recs, k=50)
-    rows = _score_all(recs, args.model, args.workers)
 
-    df = pd.DataFrame(rows, columns=SCORE_COLUMNS).sort_values(
-        "utterance_id", kind="mergesort").reset_index(drop=True)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(args.out, index=False)
-    print(f"[dnsmos] wrote {args.out}: rows={len(df)}")
-    print(f"[dnsmos] ovr_mos empirical min={df['ovr_mos'].min():.4f} "
-          f"max={df['ovr_mos'].max():.4f} mean={df['ovr_mos'].mean():.4f} "
-          f"(raw-scale provenance — ranking is calibration-invariant)")
-    return 0
+    # opened BEFORE the expensive pass, not after -- so partial progress
+    # (and a crash, or a SLURM --time wall) are both visible in W&B
+    run = _wandb_init(project=args.wandb_project, entity=args.wandb_entity,
+                      mode=args.wandb_mode, job_id=args.job_id,
+                      model_path=str(args.model), workers=args.workers,
+                      n_recs=len(recs))
+    try:
+        print(f"[dnsmos] scoring {len(recs)} train-pool utterances "
+              f"model={args.model.name}", flush=True)
+        _preflight(recs, k=50)
+        rows = _score_all(recs, args.model, args.workers,
+                          report_every=args.report_every,
+                          on_progress=_log_scoring_progress)
+
+        df = pd.DataFrame(rows, columns=SCORE_COLUMNS).sort_values(
+            "utterance_id", kind="mergesort").reset_index(drop=True)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(args.out, index=False)
+        print(f"[dnsmos] wrote {args.out}: rows={len(df)}")
+        print(f"[dnsmos] ovr_mos empirical min={df['ovr_mos'].min():.4f} "
+              f"max={df['ovr_mos'].max():.4f} mean={df['ovr_mos'].mean():.4f} "
+              f"(raw-scale provenance — ranking is calibration-invariant)")
+        log_final_summary_to_wandb(df)
+        return 0
+    finally:
+        run.finish()
 
 
 if __name__ == "__main__":

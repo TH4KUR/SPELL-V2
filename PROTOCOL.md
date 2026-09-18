@@ -239,10 +239,19 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     with that checkpoint's own duration + cumulative elapsed;
     `sweep_dsir_l2.py`: `wandb.init` moved to the top of `main()`, each l2
     point logged as it's computed). **Compliant**: `scripts/sweep_dsir_l2.py`,
-    `scripts/score_less.py`. **NOT YET compliant**: `scripts/score_proxy.py`,
-    `scripts/score_kmeans.py`, `scripts/score_dsir.py`,
-    `scripts/score_dnsmos.py` — all four predate §3.23 entirely and still
-    only print to stdout / write parquet. Retrofitting them is a separate,
+    `scripts/score_less.py`, `scripts/score_dnsmos.py`, `scripts/score_proxy.py`
+    (the latter two retrofitted 2026-09-18, with explicit user sign-off,
+    after job 2700964 sat at 2:40:30 of a 3:00:00 SLURM wall with zero W&B
+    trace of progress — `_wandb_init` opens early; `score_dnsmos.py` reports
+    every `--report-every` (default 2000) utterances scored via its
+    ProcessPoolExecutor.map, previously consumed as a blind `list(...)` with
+    no visibility at all between "started" and "done"; `score_proxy.py`
+    reports at BOTH the per-checkpoint level and the within-checkpoint
+    utterance level, since with only 2 late checkpoints by default a
+    per-checkpoint-only granularity would give just 2 data points for the
+    whole job). **NOT YET compliant**: `scripts/score_kmeans.py`,
+    `scripts/score_dsir.py` — both predate §3.23 entirely and still only
+    print to stdout / write parquet. Retrofitting them is a separate,
     larger change (touches already-tested/shipped code) and needs explicit
     user sign-off before it happens, not a silent expansion of whatever task
     is in flight — but any NEW scorer/sweep/analysis script from this point
