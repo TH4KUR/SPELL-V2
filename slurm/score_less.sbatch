@@ -17,7 +17,10 @@
 # NOT a no_grad inference job like score_proxy.sbatch — budget accordingly;
 # 06:00:00 is a starting point: 4 checkpoints + a val pass vs score_proxy's 2
 # checkpoints, no-grad-only). Writes scores/less_influence_seed{201,202,203}.parquet
-# INTO the clone; commit-from-Ada per §5 item 12 afterwards.
+# INTO the clone; commit-from-Ada per §5 item 12 afterwards. Logs to W&B
+# (job_type=less_scoring, per-seed influence stats + cross-seed spearman
+# agreement) — a run crucial to the research, per standing policy; scoped
+# away from PROTOCOL §3.17's formal-run contract.
 #
 # Usage (from ~/spell/repo):
 #   sbatch --export=ALL,SPELL_LESS_BUNDLE=runs/track_b/<proxy_run_id> \
@@ -41,5 +44,6 @@ source ~/envs/spell/bin/activate
 python scripts/check_storage.py --strict
 python -c "import hardware_guard; info = hardware_guard.assert_gpu(); print('[score_less] gpu:', info)"
 
-python scripts/score_less.py --bundle "$BUNDLE" --out-dir scores --seeds 201 202 203
-echo "DONE score_less — commit scores/ from this clone (§5 item 12)."
+python scripts/score_less.py --bundle "$BUNDLE" --out-dir scores --seeds 201 202 203 \
+    --job-id "${SLURM_JOB_ID}"
+echo "DONE score_less — check the W&B run + spearman lines, then commit scores/ (§5 item 12)."

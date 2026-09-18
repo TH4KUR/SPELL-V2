@@ -12,7 +12,10 @@ Laws pinned here:
   * the Rademacher projection is seed-deterministic and seed-divergent
     (§3.20 ×3), and main() actually produces DIFFERENT influence values per
     seed end-to-end (the projection is not an accidental no-op);
-  * main() refuses to write anything if a val id would appear in the table.
+  * main() refuses to write anything if a val id would appear in the table;
+  * W&B logging (SPELL-RQ2 policy: runs crucial to the research get logged)
+    runs structurally (mode="disabled" needs no network/credentials) and
+    reports per-seed stats plus cross-seed spearman agreement.
 """
 
 from __future__ import annotations
@@ -317,6 +320,35 @@ def test_influence_for_seed_mirrors_mean_across_ckpts():
     assert got == pytest.approx(expected)
 
 
+# --------------------------------------------------------------------- wandb
+
+def test_spearman_perfect_agreement_and_disagreement():
+    a = {"u1": 1.0, "u2": 2.0, "u3": 3.0}
+    b_agree = {"u1": 10.0, "u2": 20.0, "u3": 30.0}
+    b_disagree = {"u1": 30.0, "u2": 20.0, "u3": 10.0}
+    assert S._spearman(a, b_agree) == pytest.approx(1.0)
+    assert S._spearman(a, b_disagree) == pytest.approx(-1.0)
+
+
+def test_spearman_uses_only_shared_ids():
+    a = {"u1": 1.0, "u2": 2.0, "u3": 3.0, "only_in_a": 99.0}
+    b = {"u1": 10.0, "u2": 20.0, "u3": 30.0, "only_in_b": -5.0}
+    assert S._spearman(a, b) == pytest.approx(1.0)
+
+
+def test_log_to_wandb_disabled_mode_runs_without_network():
+    """mode='disabled' no-ops all wandb network/credential activity -- proves
+    the logging code path (including the cross-seed spearman computation)
+    is structurally correct without needing a live run."""
+    seed_influences = {
+        201: {"v0/1": 1.0, "v0/2": 2.0, "v0/3": 3.0},
+        202: {"v0/1": 1.5, "v0/2": 2.5, "v0/3": 2.9},
+    }
+    S.log_to_wandb(seed_influences, project="spell-rq2", entity=None,
+                   mode="disabled", job_id="test", bundle="runs/track_b/fake",
+                   n_ckpts=4, proj_dim=512)
+
+
 # ------------------------------------------------------------------------ main
 
 def _fake_main_setup(monkeypatch, train_vecs_per_ckpt, ref_vec_per_ckpt, val_ids=()):
@@ -350,7 +382,8 @@ def test_main_writes_one_parquet_per_seed_and_seeds_actually_differ(tmp_path, mo
 
     out = tmp_path / "scores"
     rc = S.main(["--bundle", str(tmp_path / "b"), "--out-dir", str(out),
-                "--seeds", "201", "202", "--proj-dim", "8"])
+                "--seeds", "201", "202", "--proj-dim", "8",
+                "--wandb-mode", "disabled"])
     assert rc == 0
 
     df201 = pd.read_parquet(out / "less_influence_seed201.parquet")

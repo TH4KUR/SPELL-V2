@@ -49,6 +49,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -260,6 +261,53 @@ def _influence_for_seed(train_vecs_per_ckpt: list[dict[str, np.ndarray]],
     return _mean_across_ckpts(rows_per_ckpt)
 
 
+def _spearman(a: dict[str, float], b: dict[str, float]) -> float:
+    """Rank correlation between two seeds' influence over their shared ids —
+    the cross-seed sanity check: the raw projected values differ by
+    construction (different Rademacher draw), but the RANKING they induce
+    should broadly agree if the projection is preserving real signal rather
+    than injecting noise that dominates it."""
+    uids = sorted(set(a) & set(b))
+    rho, _ = spearmanr([a[u] for u in uids], [b[u] for u in uids])
+    return float(rho)
+
+
+def log_to_wandb(seed_influences: dict[int, dict[str, float]], *, project: str,
+                 entity: str | None, mode: str, job_id: str, bundle: str,
+                 n_ckpts: int, proj_dim: int) -> None:
+    """W&B observability for this scoring run (SPELL-RQ2 policy: runs crucial
+    to the research get logged, not only formal Track A/B training runs).
+    Scoped OUTSIDE the PROTOCOL §3.17 formal-run contract: distinct
+    job_type, less_scoring/*-prefixed series, never touching the frozen
+    train/val series names."""
+    import wandb
+
+    run = wandb.init(project=project, entity=entity, mode=mode,
+                     job_type="less_scoring",
+                     name=f"less-scoring-{job_id}",
+                     dir=str(Path(__file__).resolve().parents[1] / "outputs" / "wandb"),
+                     tags=["less", "ctc-grad", "roster-5"])
+    wandb.config.update({"bundle": str(bundle), "n_ckpts": n_ckpts,
+                        "proj_dim": proj_dim, "seeds": sorted(seed_influences)})
+    for seed, influence in seed_influences.items():
+        vals = np.array(list(influence.values()), dtype=float)
+        wandb.log({
+            f"less_scoring/influence_min_seed{seed}": float(vals.min()),
+            f"less_scoring/influence_max_seed{seed}": float(vals.max()),
+            f"less_scoring/influence_mean_seed{seed}": float(vals.mean()),
+            f"less_scoring/influence_std_seed{seed}": float(vals.std()),
+            f"less_scoring/n_rows_seed{seed}": int(vals.size),
+        })
+    seeds_sorted = sorted(seed_influences)
+    for i in range(len(seeds_sorted)):
+        for j in range(i + 1, len(seeds_sorted)):
+            s1, s2 = seeds_sorted[i], seeds_sorted[j]
+            rho = _spearman(seed_influences[s1], seed_influences[s2])
+            wandb.run.summary[f"less_scoring/spearman_seed{s1}_vs_seed{s2}"] = rho
+            print(f"[less] spearman(seed{s1}, seed{s2}) = {rho:.4f}", flush=True)
+    run.finish()
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -275,6 +323,12 @@ def main(argv=None) -> int:
     ap.add_argument("--batch-size", type=int, default=16,
                     help="lower than score_proxy's 32: grad-enabled forward "
                     "keeps more activation memory alive than no_grad inference")
+    ap.add_argument("--wandb-project", default="spell-rq2")
+    ap.add_argument("--wandb-entity", default=None)
+    ap.add_argument("--wandb-mode", choices=["online", "offline", "disabled"],
+                    default="online")
+    ap.add_argument("--job-id", default="local",
+                    help="SLURM job id or other run tag for the W&B run name")
     args = ap.parse_args(argv)
 
     enforce_gpu_policy()
@@ -297,6 +351,7 @@ def main(argv=None) -> int:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     val_set = set(val_ids)
+    seed_influences: dict[int, dict[str, float]] = {}
     for seed in args.seeds:
         influence = _influence_for_seed(train_vecs_per_ckpt, ref_vec_per_ckpt,
                                         seed, in_dim, args.proj_dim)
@@ -306,6 +361,7 @@ def main(argv=None) -> int:
                 f"val-leak: {len(leaked)} val ids present in the about-to-be-"
                 f"written table (§3.21) — refusing to write: "
                 f"{sorted(leaked)[:5]}")
+        seed_influences[int(seed)] = influence
         rows = [{"utterance_id": uid, "influence": v,
                 "n_ckpts": len(train_vecs_per_ckpt)}
                for uid, v in influence.items()]
@@ -316,6 +372,10 @@ def main(argv=None) -> int:
         print(f"[less] seed={seed}: wrote {out} rows={len(df)} "
               f"(influence min={df['influence'].min():.4f} "
               f"max={df['influence'].max():.4f})")
+
+    log_to_wandb(seed_influences, project=args.wandb_project, entity=args.wandb_entity,
+                mode=args.wandb_mode, job_id=args.job_id, bundle=str(args.bundle),
+                n_ckpts=len(train_vecs_per_ckpt), proj_dim=args.proj_dim)
     return 0
 
 
