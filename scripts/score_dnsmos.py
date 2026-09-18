@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -135,31 +135,48 @@ def _preflight(recs, k: int = 50) -> None:
     data_paths.preflight_resolve(recs, k=min(k, len(recs)), kind="audio")
 
 
+def _score_chunk(tasks_chunk: list[tuple[str, str]]) -> list[dict]:
+    """One ProcessPoolExecutor unit of work — a small batch, not the whole
+    task list, so cheap IPC batching survives switching to as_completed()
+    below (module-level: must stay picklable)."""
+    return [_score_one(t) for t in tasks_chunk]
+
+
 def _score_all(recs, model_path: str | Path, workers: int,
-               report_every: int = 2000, on_progress=None) -> list[dict]:
-    """`on_progress(done, total, chunk_s, elapsed_s)` (if given) fires every
-    time at least `report_every` NEW rows have landed since the last report
-    (and once more at the very end) — PROTOCOL §3.24: this is a long
-    ProcessPoolExecutor.map over ~29k utterances with previously ZERO
-    visibility between "started" and "done"; `chunk_s` is that chunk's OWN
-    duration, not just the cumulative `elapsed_s`, so a slow/stuck stretch
-    is visible on its own rather than averaged away."""
+               report_every_s: float = 30.0, chunk_size: int = 16,
+               on_progress=None) -> list[dict]:
+    """`on_progress(done, total, chunk_s, elapsed_s)` (if given) fires at
+    least every `report_every_s` seconds of WALL-CLOCK time (plus once more
+    at the very end) — PROTOCOL §3.24.
+
+    An earlier version reported every N rows instead of every N seconds:
+    wrong, because it silently assumes a throughput rate — at this scorer's
+    real ~3h/29k-utterance rate, a threshold of 2000 rows meant the FIRST
+    log line didn't appear for ~10+ minutes. It also consumed the pool via
+    `ProcessPoolExecutor.map()`, whose iterator yields results strictly in
+    INPUT order — so a single slow chunk at the front of the task list
+    could block every later, already-finished chunk from being observed at
+    all, i.e. workers were producing output with nothing to show for it.
+    Both are fixed here: reporting is scheduled by elapsed time, not item
+    count, and chunks are consumed via as_completed() so a fast chunk is
+    visible the moment it finishes, regardless of its position in the task
+    list."""
     tasks = [(r.utterance_id, str(resolve_audio_for(r))) for r in recs]
     n_total = len(tasks)
     t_start = time.monotonic()
     t_prev = t_start
+    t_last_report = t_start
     rows: list[dict] = []
-    reported = 0
 
-    def _maybe_report() -> None:
-        nonlocal t_prev, reported
+    def _maybe_report(force: bool = False) -> None:
+        nonlocal t_prev, t_last_report
         if on_progress is None:
             return
-        if len(rows) - reported >= report_every or len(rows) >= n_total:
-            now = time.monotonic()
+        now = time.monotonic()
+        if force or now - t_last_report >= report_every_s:
             on_progress(len(rows), n_total, now - t_prev, now - t_start)
             t_prev = now
-            reported = len(rows)
+            t_last_report = now
 
     if workers <= 1:
         global _SESSION
@@ -172,10 +189,13 @@ def _score_all(recs, model_path: str | Path, workers: int,
             global _SESSION
             _SESSION = load_session(model_path)
 
+        chunks = [tasks[i:i + chunk_size] for i in range(0, n_total, chunk_size)]
         with ProcessPoolExecutor(max_workers=workers, initializer=init) as ex:
-            for row in ex.map(_score_one, tasks, chunksize=16):
-                rows.append(row)
+            futures = [ex.submit(_score_chunk, c) for c in chunks]
+            for fut in as_completed(futures):
+                rows.extend(fut.result())
                 _maybe_report()
+    _maybe_report(force=True)
     return sorted(rows, key=lambda r: r["utterance_id"])
 
 
@@ -200,12 +220,19 @@ def _wandb_init(*, project: str, entity: str | None, mode: str, job_id: str,
 def _log_scoring_progress(done: int, total: int, chunk_s: float, elapsed_s: float) -> None:
     import wandb
 
+    rate = done / elapsed_s if elapsed_s > 0 else 0.0
+    eta_s = (total - done) / rate if rate > 0 else float("nan")
     wandb.log({"dnsmos_scoring/utts_done": done,
               "dnsmos_scoring/utts_total": total,
               "dnsmos_scoring/chunk_duration_s": chunk_s,
-              "dnsmos_scoring/elapsed_s": elapsed_s})
-    print(f"[dnsmos] {done}/{total} utterances scored "
-          f"(+{chunk_s:.0f}s, {elapsed_s:.0f}s total elapsed)", flush=True)
+              "dnsmos_scoring/elapsed_s": elapsed_s,
+              "dnsmos_scoring/utts_per_s": rate,
+              "dnsmos_scoring/eta_s": eta_s})
+    pct = 100.0 * done / total if total else 0.0
+    eta_str = f"{eta_s / 60:.1f} min" if eta_s == eta_s else "unknown"
+    print(f"[dnsmos] {done}/{total} ({pct:.1f}%) scored "
+          f"— +{chunk_s:.0f}s since last report, {elapsed_s / 60:.1f} min elapsed, "
+          f"~{rate:.2f} utt/s, ETA {eta_str}", flush=True)
 
 
 def log_final_summary_to_wandb(df: pd.DataFrame) -> None:
@@ -229,8 +256,10 @@ def main(argv=None) -> int:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int, default=None,
                     help="smoke: score only the first N utterances")
-    ap.add_argument("--report-every", type=int, default=2000,
-                    help="progress-log granularity in utterances scored")
+    ap.add_argument("--report-every-s", type=float, default=30.0,
+                    help="minimum wall-clock seconds between progress reports")
+    ap.add_argument("--chunk-size", type=int, default=16,
+                    help="utterances per ProcessPoolExecutor work unit")
     ap.add_argument("--wandb-project", default="spell-rq2")
     ap.add_argument("--wandb-entity", default=None)
     ap.add_argument("--wandb-mode", choices=["online", "offline", "disabled"],
@@ -254,7 +283,8 @@ def main(argv=None) -> int:
               f"model={args.model.name}", flush=True)
         _preflight(recs, k=50)
         rows = _score_all(recs, args.model, args.workers,
-                          report_every=args.report_every,
+                          report_every_s=args.report_every_s,
+                          chunk_size=args.chunk_size,
                           on_progress=_log_scoring_progress)
 
         df = pd.DataFrame(rows, columns=SCORE_COLUMNS).sort_values(
@@ -268,7 +298,13 @@ def main(argv=None) -> int:
         log_final_summary_to_wandb(df)
         return 0
     finally:
-        run.finish()
+        # exit_code reflects whether we're unwinding due to an exception --
+        # run.finish() with no args always marks the run "Finished" even
+        # when the body crashed (caught live, 2026-09-18: job 2701229's
+        # score_proxy.py crash still showed as a completed run in the W&B
+        # UI). sys.exc_info() is non-None here iff an exception is
+        # currently propagating through this finally block.
+        run.finish(exit_code=1 if sys.exc_info()[0] is not None else 0)
 
 
 if __name__ == "__main__":

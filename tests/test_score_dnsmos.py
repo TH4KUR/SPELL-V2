@@ -16,7 +16,6 @@ Laws pinned here:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -130,44 +129,27 @@ def test_train_pool_only_and_sorted_output(tmp_path, monkeypatch):
 
 # ------------------------------------------------------------- progress/wandb
 
-def test_score_all_reports_progress_every_report_every_rows_and_at_end(monkeypatch, tmp_path):
-    """PROTOCOL §3.23/§3.24: this scorer's ProcessPoolExecutor.map used to be
-    consumed via a blind list(...) with zero visibility until everything was
-    done. on_progress must fire every `report_every` NEW rows, plus once
-    more at the very end even if that doesn't land on a clean multiple."""
-    recs = [_rec(f"v0/{i}") for i in range(5)]
+def test_score_all_reports_on_a_time_cadence_not_a_row_count(monkeypatch, tmp_path):
+    """PROTOCOL §3.23/§3.24: reporting must be scheduled by ELAPSED TIME, not
+    a fixed row count -- a count-based threshold silently assumes a
+    throughput rate (the original version's `report_every=2000` meant the
+    FIRST log line didn't appear for ~10+ minutes at this scorer's real
+    rate). A fake, manually-advanced clock proves reports land once
+    report_every_s has actually passed, regardless of how many rows
+    completed in that window, and a final forced report covers the tail
+    even when it doesn't land on a clean interval boundary."""
+    recs = [_rec(f"v0/{i}") for i in range(6)]
     monkeypatch.setattr(S, "resolve_audio_for", lambda rec: tmp_path / "a.flac")
     monkeypatch.setattr(S, "load_session", lambda model_path: object())
 
-    def fake_score_one(task):
-        uid, _ = task
-        return {"utterance_id": uid, "sig_raw": 1.0, "bak_raw": 2.0, "ovr_raw": 3.0,
-                "sig_mos": 1.0, "bak_mos": 2.0, "ovr_mos": 3.0, "n_hops": 1}
-
-    monkeypatch.setattr(S, "_score_one", fake_score_one)
-
-    seen = []
-    rows = S._score_all(recs, "fake-model.pt", workers=1, report_every=2,
-                        on_progress=lambda *a: seen.append(a))
-    assert len(rows) == 5
-    assert [s[0] for s in seen] == [2, 4, 5]     # every 2, plus once more at the end (5)
-    assert all(s[1] == 5 for s in seen)
-
-
-def test_score_all_progress_reports_chunk_duration_not_cumulative(monkeypatch, tmp_path):
-    """Mirrors score_less.py's per-checkpoint proof: the callback's chunk_s
-    must be THAT chunk's own duration, not the running total -- otherwise a
-    single slow/stuck stretch (exactly what happened on the near-timeout
-    Ada job that prompted this retrofit) is averaged away and invisible."""
-    recs = [_rec(f"v0/{i}") for i in range(3)]
-    monkeypatch.setattr(S, "resolve_audio_for", lambda rec: tmp_path / "a.flac")
-    monkeypatch.setattr(S, "load_session", lambda model_path: object())
-    sleep_schedule = [0.05, 0.02, 0.08]
+    clock = {"t": 0.0}
+    monkeypatch.setattr(S.time, "monotonic", lambda: clock["t"])
+    costs = [5.0, 5.0, 15.0, 1.0, 1.0, 1.0]   # cumulative: 5,10,25,26,27,28
     call_index = {"i": 0}
 
     def fake_score_one(task):
         uid, _ = task
-        time.sleep(sleep_schedule[call_index["i"]])
+        clock["t"] += costs[call_index["i"]]
         call_index["i"] += 1
         return {"utterance_id": uid, "sig_raw": 1.0, "bak_raw": 2.0, "ovr_raw": 3.0,
                 "sig_mos": 1.0, "bak_mos": 2.0, "ovr_mos": 3.0, "n_hops": 1}
@@ -175,13 +157,23 @@ def test_score_all_progress_reports_chunk_duration_not_cumulative(monkeypatch, t
     monkeypatch.setattr(S, "_score_one", fake_score_one)
 
     seen = []
-    S._score_all(recs, "fake-model.pt", workers=1, report_every=1,
-                on_progress=lambda done, total, chunk_s, elapsed_s:
-                    seen.append((done, total, chunk_s, elapsed_s)))
-    assert [s[0] for s in seen] == [1, 2, 3]
-    for idx, (_, _, chunk_s, _) in enumerate(seen):
-        assert chunk_s == pytest.approx(sleep_schedule[idx], abs=0.05)
-    assert seen[0][3] < seen[1][3] < seen[2][3]      # elapsed strictly increases
+    rows = S._score_all(recs, "fake-model.pt", workers=1, report_every_s=10.0,
+                        on_progress=lambda *a: seen.append(a))
+    assert len(rows) == 6
+    # t=5: no report (<10s since start). t=10: report (done=2). t=25: report
+    # (done=3, 15s since last). t=26,27: no report (<10s since last).
+    # t=28: forced final report (done=6) even though only 3s have passed.
+    assert [s[0] for s in seen] == [2, 3, 6]
+    assert all(s[1] == 6 for s in seen)
+    # each report's chunk_s is the DELTA since the last report, not
+    # cumulative elapsed_s -- proven by chunk_s NOT following elapsed_s's
+    # strictly-increasing pattern (15 > 10, then 3 < 15) while elapsed_s
+    # itself does strictly increase
+    chunk_durations = [s[2] for s in seen]
+    elapsed_times = [s[3] for s in seen]
+    assert chunk_durations == pytest.approx([10.0, 15.0, 3.0])
+    assert elapsed_times == pytest.approx([10.0, 25.0, 28.0])
+    assert elapsed_times[0] < elapsed_times[1] < elapsed_times[2]
 
 
 def test_wandb_init_disabled_mode_runs_without_network():
@@ -195,6 +187,55 @@ def test_log_scoring_progress_disabled_mode_runs_without_network():
                         job_id="test", model_path="fake.pt", workers=1, n_recs=5)
     S._log_scoring_progress(2000, 29064, 45.0, 45.0)
     run.finish()
+
+
+def test_main_marks_wandb_run_failed_on_exception(monkeypatch, tmp_path):
+    """Caught live (2026-09-18): job 2701229 (score_proxy.py, identical
+    finally: pattern) crashed but still showed as a completed run in the
+    W&B UI, because `run.finish()` with no args defaults to success
+    regardless of whether an exception is propagating. A fake run object
+    (not real wandb) proves main() now passes exit_code=1 on a crash."""
+    calls = []
+
+    class FakeRun:
+        def finish(self, exit_code=0):
+            calls.append(exit_code)
+
+    monkeypatch.setattr(S, "_wandb_init", lambda **kw: FakeRun())
+    monkeypatch.setattr(S, "_collect_train_records", lambda: [_rec("v0/1")])
+
+    def boom(recs, k=50):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(S, "_preflight", boom)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        S.main(["--out", str(tmp_path / "out.parquet")])
+    assert calls == [1]
+
+
+def test_main_marks_wandb_run_succeeded_on_clean_exit(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeRun:
+        def finish(self, exit_code=0):
+            calls.append(exit_code)
+
+    monkeypatch.setattr(S, "_wandb_init", lambda **kw: FakeRun())
+    monkeypatch.setattr(S, "log_final_summary_to_wandb", lambda df: None)
+    monkeypatch.setattr(S, "_collect_train_records", lambda: [_rec(u) for u in
+                                                              ("v0/1", "v0/2")])
+    monkeypatch.setattr(S, "_preflight", lambda recs, k=50: None)
+    monkeypatch.setattr(S, "_score_all", lambda recs, model, workers, **kw: [
+        {"utterance_id": "v0/1", "sig_raw": 1.0, "bak_raw": 2.0, "ovr_raw": 3.0,
+         "sig_mos": 1.0, "bak_mos": 2.0, "ovr_mos": 3.0, "n_hops": 1},
+        {"utterance_id": "v0/2", "sig_raw": 1.0, "bak_raw": 2.0, "ovr_raw": 3.0,
+         "sig_mos": 1.0, "bak_mos": 2.0, "ovr_mos": 3.0, "n_hops": 1},
+    ])
+
+    rc = S.main(["--out", str(tmp_path / "out.parquet"), "--workers", "1"])
+    assert rc == 0
+    assert calls == [0]
 
 
 def test_log_final_summary_to_wandb_disabled_mode_runs_without_network():

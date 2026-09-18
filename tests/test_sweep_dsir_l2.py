@@ -168,6 +168,30 @@ def test_log_final_summary_to_wandb_disabled_mode_runs_without_network():
     run.finish()
 
 
+def test_main_marks_wandb_run_failed_on_exception(monkeypatch, tmp_path):
+    """Caught live (2026-09-18) on score_proxy.py's identical finally:
+    pattern -- job 2701229 crashed but still showed as a completed run in
+    the W&B UI, because `run.finish()` with no args defaults to success
+    regardless of whether an exception is propagating. A fake run object
+    (not real wandb) proves main() now passes exit_code=1 on a crash."""
+    calls = []
+
+    class FakeRun:
+        def finish(self, exit_code=0):
+            calls.append(exit_code)
+
+    monkeypatch.setattr(S, "_wandb_init", lambda **kw: FakeRun())
+
+    def boom(l2s, every, on_point_done=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(S, "run_sweep", boom)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        S.main(["--l2s", "1e-4", "--out", str(tmp_path / "sweep.parquet")])
+    assert calls == [1]
+
+
 def test_main_cli_writes_output_and_recommends_best_auc(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(dsir, "_collect_populations", _synthetic_populations)
     out = tmp_path / "sweep.parquet"

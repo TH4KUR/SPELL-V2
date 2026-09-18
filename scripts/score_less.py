@@ -422,7 +422,11 @@ def main(argv=None) -> int:
         log_seed_summary_to_wandb(seed_influences)
         return 0
     finally:
-        run.finish()
+        # exit_code reflects whether we're unwinding due to an exception --
+        # run.finish() with no args always marks the run "Finished" even
+        # when the body crashed (caught live, 2026-09-18, on score_proxy.py's
+        # identical finally: block -- the same gap existed here).
+        run.finish(exit_code=1 if sys.exc_info()[0] is not None else 0)
 
 
 if __name__ == "__main__":

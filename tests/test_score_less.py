@@ -375,6 +375,31 @@ def test_spearman_uses_only_shared_ids():
     assert S._spearman(a, b) == pytest.approx(1.0)
 
 
+def test_main_marks_wandb_run_failed_on_exception(monkeypatch, tmp_path):
+    """Caught live (2026-09-18) on score_proxy.py's identical finally:
+    pattern -- job 2701229 crashed but still showed as a completed run in
+    the W&B UI, because `run.finish()` with no args defaults to success
+    regardless of whether an exception is propagating. A fake run object
+    (not real wandb) proves main() now passes exit_code=1 on a crash."""
+    calls = []
+
+    class FakeRun:
+        def finish(self, exit_code=0):
+            calls.append(exit_code)
+
+    monkeypatch.setattr(S, "_wandb_init", lambda **kw: FakeRun())
+    monkeypatch.setattr(S, "enforce_gpu_policy", lambda: {"gpu_name": "fake"})
+
+    def boom(bundle):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(S, "_all_ckpts", boom)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        S.main(["--bundle", str(tmp_path / "b")])
+    assert calls == [1]
+
+
 def test_wandb_init_disabled_mode_runs_without_network():
     """mode='disabled' no-ops all wandb network/credential activity -- proves
     the run opens (and can be finished) without needing live credentials."""

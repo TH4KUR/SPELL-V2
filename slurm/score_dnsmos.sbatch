@@ -20,9 +20,9 @@
 # had gotten — this same retrofit adds live W&B progress (§3.23/§3.24) so a
 # future near-timeout is at least OBSERVABLE, but the wall itself needed
 # headroom regardless.
-# Logs to W&B LIVE (job_type=dnsmos_scoring): progress every --report-every
-# (default 2000) utterances scored, each report carrying its own chunk
-# duration (§3.24), not just cumulative elapsed.
+# Logs to W&B LIVE (job_type=dnsmos_scoring): progress every --report-every-s
+# (default 30) seconds of wall clock, each report carrying an ETA plus its
+# own chunk duration (§3.24/§3.25), not just cumulative elapsed.
 set -euo pipefail
 module purge
 module load u22/python/3.12.4

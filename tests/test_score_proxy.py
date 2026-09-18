@@ -85,12 +85,15 @@ def test_main_schema_train_only_sorted(tmp_path, monkeypatch):
 
 # ------------------------------------------------------------- progress/wandb
 
-def test_score_one_lit_reports_progress_every_report_every_utterances(monkeypatch):
+def test_score_one_lit_reports_on_a_time_cadence_not_a_row_count(monkeypatch):
     """PROTOCOL §3.23/§3.24: within ONE checkpoint's pass over the train
     pool (the part that dominates wall-clock, given only 2 late checkpoints
-    by default) on_progress must fire every `report_every` NEW rows, plus
-    once more at the end even off a clean multiple."""
-    n = 5
+    by default) on_progress must fire on a WALL-CLOCK cadence, not a fixed
+    row count -- mirrors score_dnsmos.py's identical fix (a count-based
+    threshold silently assumes a throughput rate). A fake, manually-
+    advanced clock proves reports land once report_every_s has actually
+    passed, with a forced final report covering the tail."""
+    n = 6
     fake_batches = [
         {"lengths": torch.tensor([1]), "text_lengths": torch.tensor([1]),
          "tokens": torch.zeros(1, 1, 1), "text_ids": torch.zeros(1, 1),
@@ -101,8 +104,14 @@ def test_score_one_lit_reports_progress_every_report_every_utterances(monkeypatc
     class FakeVocab:
         pad_id = 0
 
+    clock = {"t": 0.0}
+    costs = [5.0, 5.0, 15.0, 1.0, 1.0, 1.0]   # cumulative: 5,10,25,26,27,28
+    call_index = {"i": 0}
+
     class FakeModel:
         def __call__(self, stream, lengths):
+            clock["t"] += costs[call_index["i"]]
+            call_index["i"] += 1
             return torch.zeros(1, 1, 1), torch.tensor([1])
 
     class FakeLit:
@@ -130,12 +139,59 @@ def test_score_one_lit_reports_progress_every_report_every_utterances(monkeypatc
                         lambda lengths, text_lengths: torch.ones(1, dtype=torch.bool))
     monkeypatch.setattr(S.ctc_lib, "ctc_loss_per_utt", lambda *a, **kw: torch.tensor([1.0]))
     monkeypatch.setattr(S.ctc_lib, "el2n_per_utt", lambda *a, **kw: torch.tensor([0.5]))
+    monkeypatch.setattr(S.time, "monotonic", lambda: clock["t"])
 
     seen = []
     out = S._score_one_lit(FakeLit(), [f"u/{i}" for i in range(n)],
-                           report_every=2, on_progress=lambda *a: seen.append(a))
+                           report_every_s=10.0, on_progress=lambda *a: seen.append(a))
     assert len(out) == n
-    assert [s[0] for s in seen] == [2, 4, 5]
+    assert [s[0] for s in seen] == [2, 3, 6]
+    assert all(s[1] == 6 for s in seen)
+
+
+def test_score_one_lit_calls_real_filter_records_without_crashing(monkeypatch):
+    """Regression test for job 2701229's crash: dataset.filter_records's
+    type contract is `ids: set[str]` (its body does `ids - known`), but
+    _score_one_lit passed the raw `ids` LIST straight through -- every
+    OTHER caller in the codebase passes a set (from load_id_list), so this
+    had never been exercised. Deliberately does NOT monkeypatch
+    filter_records (unlike the test above), so it runs dataset.py's real
+    implementation end-to-end against the exact list-shaped `ids` that
+    main()'s _collect_train_records() actually returns."""
+    n = 3
+
+    class FakeVocab:
+        pad_id = 0
+
+    class FakeModel:
+        def __call__(self, stream, lengths):
+            raise AssertionError("should not be reached with an empty DataLoader")
+
+    class FakeLit:
+        model = FakeModel()
+        vocab = FakeVocab()
+        cfg = {"model": {"input_stream": 0}}
+        blank_id = 0
+
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+    class FakeRec:
+        def __init__(self, uid):
+            self.utterance_id = uid
+
+    fake_recs = [FakeRec(f"u/{i}") for i in range(n)]
+    monkeypatch.setattr(S, "load_records", lambda index_path, split: fake_recs)
+    monkeypatch.setattr(S, "TokenDataset", lambda records, **kw: records)
+    monkeypatch.setattr(S, "DataLoader", lambda dataset, **kw: [])
+
+    ids = [f"u/{i}" for i in range(n)]     # a LIST, exactly like main()'s
+                                            # _collect_train_records() returns
+    out = S._score_one_lit(FakeLit(), ids)
+    assert out == {}
 
 
 def test_score_all_threads_ckpt_index_through_progress_callback(monkeypatch):
@@ -147,7 +203,7 @@ def test_score_all_threads_ckpt_index_through_progress_callback(monkeypatch):
     sleep_schedule = [0.05, 0.02, 0.08]
     call_index = {"i": 0}
 
-    def fake_score_one_lit(lit, ids, report_every=2000, on_progress=None):
+    def fake_score_one_lit(lit, ids, report_every_s=30.0, on_progress=None):
         time.sleep(sleep_schedule[call_index["i"]])
         call_index["i"] += 1
         if on_progress is not None:
@@ -157,10 +213,62 @@ def test_score_all_threads_ckpt_index_through_progress_callback(monkeypatch):
     monkeypatch.setattr(S, "_score_one_lit", fake_score_one_lit)
 
     seen = []
-    S._score_all(["ck1", "ck2", "ck3"], ["u/1"], report_every=2000,
+    S._score_all(["ck1", "ck2", "ck3"], ["u/1"], report_every_s=30.0,
                 on_ckpt_done=lambda *a: seen.append(a))
     assert [s[0] for s in seen] == [1, 2, 3]
     assert all(s[1] == 3 for s in seen)
+
+
+def test_main_marks_wandb_run_failed_on_exception(monkeypatch, tmp_path):
+    """Caught live (2026-09-18): job 2701229 crashed on filter_records's
+    list/set type mismatch (see the fix in _score_one_lit) but still showed
+    as a completed run in the W&B UI, because `run.finish()` with no args
+    defaults to success regardless of whether an exception is propagating.
+    A fake run object (not real wandb) proves main() now passes
+    exit_code=1 on a crash."""
+    calls = []
+
+    class FakeRun:
+        def finish(self, exit_code=0):
+            calls.append(exit_code)
+
+    monkeypatch.setattr(S, "_wandb_init", lambda **kw: FakeRun())
+    monkeypatch.setattr(S, "_collect_train_records", lambda: ["v0/1"])
+    monkeypatch.setattr(S, "enforce_gpu_policy", lambda: {"gpu_name": "fake"})
+
+    def boom(bundle, late_frac):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(S, "_late_ckpts", boom)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        S.main(["--bundle", str(tmp_path / "b")])
+    assert calls == [1]
+
+
+def test_main_marks_wandb_run_succeeded_on_clean_exit(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeRun:
+        def finish(self, exit_code=0):
+            calls.append(exit_code)
+
+    monkeypatch.setattr(S, "_wandb_init", lambda **kw: FakeRun())
+    monkeypatch.setattr(S, "log_final_summary_to_wandb", lambda df: None)
+    monkeypatch.setattr(S, "enforce_gpu_policy", lambda: {"gpu_name": "fake"})
+    monkeypatch.setattr(S, "_late_ckpts", lambda b, late_frac: ["ck1"])
+    monkeypatch.setattr(S, "_load_lit", lambda c: object())
+    monkeypatch.setattr(S, "_collect_train_records", lambda: ["v0/1"])
+    monkeypatch.setattr(S, "load_records", lambda index_path, split: [])
+    monkeypatch.setattr(S, "_preflight", lambda recs, k=50: None)
+    monkeypatch.setattr(S, "_score_all", lambda lits, ids, **kw: [
+        {"utterance_id": "v0/1", "loss_mean": 1.0, "el2n_mean": 0.5, "n_ckpts": 1},
+    ])
+
+    out = tmp_path / "scores" / "out.parquet"
+    rc = S.main(["--bundle", str(tmp_path / "b"), "--out", str(out)])
+    assert rc == 0
+    assert calls == [0]
 
 
 def test_wandb_init_disabled_mode_runs_without_network():

@@ -242,21 +242,66 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     `scripts/score_less.py`, `scripts/score_dnsmos.py`, `scripts/score_proxy.py`
     (the latter two retrofitted 2026-09-18, with explicit user sign-off,
     after job 2700964 sat at 2:40:30 of a 3:00:00 SLURM wall with zero W&B
-    trace of progress — `_wandb_init` opens early; `score_dnsmos.py` reports
-    every `--report-every` (default 2000) utterances scored via its
-    ProcessPoolExecutor.map, previously consumed as a blind `list(...)` with
-    no visibility at all between "started" and "done"; `score_proxy.py`
-    reports at BOTH the per-checkpoint level and the within-checkpoint
-    utterance level, since with only 2 late checkpoints by default a
-    per-checkpoint-only granularity would give just 2 data points for the
-    whole job). **NOT YET compliant**: `scripts/score_kmeans.py`,
-    `scripts/score_dsir.py` — both predate §3.23 entirely and still only
-    print to stdout / write parquet. Retrofitting them is a separate,
-    larger change (touches already-tested/shipped code) and needs explicit
-    user sign-off before it happens, not a silent expansion of whatever task
-    is in flight — but any NEW scorer/sweep/analysis script from this point
-    on ships with BOTH §3.23 and this item from day one, not as an
-    afterthought added after the fact.
+    trace of progress — `_wandb_init` opens early; both report on a
+    WALL-CLOCK cadence (`--report-every-s`, default 30s), not a row count —
+    see §3.25, which amends this same day after a count-based first attempt
+    turned out to be its own bug. `score_dnsmos.py`'s ProcessPoolExecutor
+    pool is consumed via `as_completed()` over small submitted chunks, not
+    `.map()`; `score_proxy.py` reports at BOTH the per-checkpoint level and
+    the within-checkpoint utterance level, since with only 2 late
+    checkpoints by default a per-checkpoint-only granularity would give
+    just 2 data points for the whole job). **NOT YET compliant**:
+    `scripts/score_kmeans.py`, `scripts/score_dsir.py` — both predate §3.23
+    entirely and still only print to stdout / write parquet. Retrofitting
+    them is a separate, larger change (touches already-tested/shipped code)
+    and needs explicit user sign-off before it happens, not a silent
+    expansion of whatever task is in flight — but any NEW scorer/sweep/
+    analysis script from this point on ships with BOTH §3.23 and this item
+    from day one, not as an afterthought added after the fact.
+25. **Two more W&B/scorer bugs, both caught live on the score_proxy.py
+    retrofit's first real Ada run (job 2701229, 2026-09-18) — amends §3.24
+    again the same day**:
+    (a) *Reporting cadence must be TIME-based, not row-count-based.* The
+    first cut of §3.24's retrofit used a fixed row-count threshold
+    (`--report-every 2000`). That silently assumes a throughput rate: at
+    `score_dnsmos.py`'s real ~3h/29k-utterance rate the FIRST log line
+    didn't appear for 10+ minutes, which the user correctly called
+    useless. Worse, `score_dnsmos.py` consumed its `ProcessPoolExecutor`
+    via `.map()`, whose iterator yields results strictly in INPUT order —
+    a single slow chunk at the front of the task list could block every
+    later, already-finished chunk from being reported at all. Fixed by
+    reporting on a wall-clock interval (`--report-every-s`, default 30s,
+    plus a forced final report) and, for `score_dnsmos.py`, switching to
+    `as_completed()` over submitted chunks so a fast chunk is visible the
+    moment it finishes regardless of position in the task list. Every
+    progress line also now carries an ETA (`utts_per_s`, `eta_s`), since
+    "how much time will this take" was the actual question, not just a
+    raw counter.
+    (b) *`run.finish()` must reflect the real outcome.* Job 2701229 crashed
+    (see below) but the W&B UI still showed the run as a completed
+    "Finished" run — `run.finish()` called with no arguments always marks
+    the run successful, even while an exception is actively propagating
+    through the same `finally:` block that calls it. Every §3.23 script's
+    `finally:` now calls `run.finish(exit_code=1 if sys.exc_info()[0] is
+    not None else 0)` instead of a bare `run.finish()` — fixed in all four
+    at once (`score_less.py`, `sweep_dsir_l2.py`, `score_dnsmos.py`,
+    `score_proxy.py`) since all four shared the identical pattern, not just
+    the one that happened to crash first.
+    Separately (not a §3.23/§3.24 logging bug, but what job 2701229 actually
+    crashed on): `score_proxy.py`'s `_score_one_lit` called
+    `filter_records(recs, ids, strict=False)` with `ids` as a plain
+    `list[str]`, but `dataset.filter_records`'s type contract is
+    `ids: set[str]` (its body computes `ids - known`) — every OTHER caller
+    in the codebase (`train_track_b.py`, `evaluate_track_b.py`) passes a
+    set built from `load_id_list`, so this mismatch had never been
+    exercised: `score_proxy.py` had never actually completed a real Ada run
+    before this attempt. Fixed by passing `set(ids)`. The test suite missed
+    this because the one existing progress test for `_score_one_lit`
+    monkeypatched `filter_records` itself, bypassing the real function
+    entirely — `tests/test_score_proxy.py` now also has a test that
+    deliberately does NOT mock `filter_records`, exercising dataset.py's
+    real implementation against a list-shaped `ids` (regression coverage
+    for this exact class of bug, not just the count-vs-time behavior).
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 

@@ -91,21 +91,23 @@ def _preflight(recs, k: int = 50) -> None:
     data_paths.preflight_resolve(recs, k=min(k, len(recs)), kind="tokens")
 
 
-def _score_one_lit(lit, ids: list[str], report_every: int = 2000,
+def _score_one_lit(lit, ids: list[str], report_every_s: float = 30.0,
                    on_progress=None) -> dict[str, tuple[float, float]]:
     """Inference pass over the train pool with ONE lit checkpoint.
 
-    `on_progress(done, total, chunk_s, elapsed_s)` (if given) fires every
-    time at least `report_every` NEW rows have landed since the last report
-    (and once more at the very end) — PROTOCOL §3.24 per-unit timing, at the
-    finer WITHIN-checkpoint granularity (this is where most of a single
-    checkpoint's wall-clock goes, not just at the "checkpoint done" level)."""
+    `on_progress(done, total, chunk_s, elapsed_s)` (if given) fires at
+    least every `report_every_s` seconds of WALL-CLOCK time (plus once more
+    at the very end) — PROTOCOL §3.24, at the finer WITHIN-checkpoint
+    granularity (this is where most of a single checkpoint's wall-clock
+    goes, not just at the "checkpoint done" level). A count-based threshold
+    was tried first and silently assumed a throughput rate; time-based
+    reporting doesn't need to know the rate in advance to stay live."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
     lit = lit.to(device).eval()
     p = load_paths()
     recs = [r for r in load_records(p.index_path, split="trainval")
             if r.utterance_id in set(ids)]
-    recs = filter_records(recs, ids, strict=False)
+    recs = filter_records(recs, set(ids), strict=False)
     vocab = lit.vocab
     collate = partial(collate_token_batch, token_pad_id=-1,
                       text_pad_id=vocab.pad_id)
@@ -117,7 +119,18 @@ def _score_one_lit(lit, ids: list[str], report_every: int = 2000,
     n_total = len(recs)
     t_start = time.monotonic()
     t_prev = t_start
-    reported = 0
+    t_last_report = t_start
+
+    def _maybe_report(force: bool = False) -> None:
+        nonlocal t_prev, t_last_report
+        if on_progress is None:
+            return
+        now = time.monotonic()
+        if force or now - t_last_report >= report_every_s:
+            on_progress(len(out), n_total, now - t_prev, now - t_start)
+            t_prev = now
+            t_last_report = now
+
     with torch.no_grad():
         for batch in dl:
             keep = ctc_lib.input_length_keep_mask(batch["lengths"],
@@ -139,16 +152,12 @@ def _score_one_lit(lit, ids: list[str], report_every: int = 2000,
             for uid, lv, ev in zip(uids, loss_vec.cpu().tolist(),
                                    el2n_vec.cpu().tolist()):
                 out[uid] = (float(lv), float(ev))
-            if on_progress is not None and (
-                    len(out) - reported >= report_every or len(out) >= n_total):
-                now = time.monotonic()
-                on_progress(len(out), n_total, now - t_prev, now - t_start)
-                t_prev = now
-                reported = len(out)
+            _maybe_report()
+    _maybe_report(force=True)
     return out
 
 
-def _score_all(lits, ids: list[str], report_every: int = 2000,
+def _score_all(lits, ids: list[str], report_every_s: float = 30.0,
                on_ckpt_done=None) -> list[dict]:
     """`on_ckpt_done(ckpt_i, n_ckpts, done, total, chunk_s, elapsed_s)` (if
     given) is threaded down into each checkpoint's own within-checkpoint
@@ -163,7 +172,7 @@ def _score_all(lits, ids: list[str], report_every: int = 2000,
             if on_ckpt_done is not None:
                 on_ckpt_done(_i, n_ckpts, done, total, chunk_s, elapsed_s)
 
-        rows_per_ckpt.append(_score_one_lit(lit, ids, report_every=report_every,
+        rows_per_ckpt.append(_score_one_lit(lit, ids, report_every_s=report_every_s,
                                             on_progress=_progress))
     means = _mean_across(rows_per_ckpt)
     rows = [{"utterance_id": uid, "loss_mean": lv, "el2n_mean": ev,
@@ -194,14 +203,21 @@ def _log_scoring_progress(ckpt_i: int, n_ckpts: int, done: int, total: int,
                           chunk_s: float, elapsed_s: float) -> None:
     import wandb
 
+    rate = done / elapsed_s if elapsed_s > 0 else 0.0
+    eta_ckpt_s = (total - done) / rate if rate > 0 else float("nan")
     wandb.log({"proxy_scoring/ckpt": ckpt_i,
               "proxy_scoring/ckpts_total": n_ckpts,
               "proxy_scoring/utts_done": done,
               "proxy_scoring/utts_total": total,
               "proxy_scoring/chunk_duration_s": chunk_s,
-              "proxy_scoring/elapsed_s": elapsed_s})
-    print(f"[proxy] ckpt {ckpt_i}/{n_ckpts}: {done}/{total} utterances scored "
-          f"(+{chunk_s:.0f}s, {elapsed_s:.0f}s total elapsed)", flush=True)
+              "proxy_scoring/elapsed_s": elapsed_s,
+              "proxy_scoring/utts_per_s": rate,
+              "proxy_scoring/eta_this_ckpt_s": eta_ckpt_s})
+    pct = 100.0 * done / total if total else 0.0
+    eta_str = f"{eta_ckpt_s / 60:.1f} min" if eta_ckpt_s == eta_ckpt_s else "unknown"
+    print(f"[proxy] ckpt {ckpt_i}/{n_ckpts}: {done}/{total} ({pct:.1f}%) scored "
+          f"— +{chunk_s:.0f}s since last report, {elapsed_s / 60:.1f} min elapsed "
+          f"this ckpt, ~{rate:.2f} utt/s, ETA (this ckpt) {eta_str}", flush=True)
 
 
 def log_final_summary_to_wandb(df: pd.DataFrame) -> None:
@@ -225,8 +241,8 @@ def main(argv=None) -> int:
     ap.add_argument("--out", type=Path, default=root / "scores" / "proxy_scores.parquet")
     ap.add_argument("--late-frac", type=float, default=0.75,
                     help="keep ckpts with epoch >= ceil(max_epoch * late_frac)")
-    ap.add_argument("--report-every", type=int, default=2000,
-                    help="progress-log granularity in utterances scored")
+    ap.add_argument("--report-every-s", type=float, default=30.0,
+                    help="minimum wall-clock seconds between progress reports")
     ap.add_argument("--wandb-project", default="spell-rq2")
     ap.add_argument("--wandb-entity", default=None)
     ap.add_argument("--wandb-mode", choices=["online", "offline", "disabled"],
@@ -251,7 +267,7 @@ def main(argv=None) -> int:
                 if r.utterance_id in set(ids)]
         _preflight(recs, k=50)
         lits = [_load_lit(c) for c in ckpts]
-        rows = _score_all(lits, ids, report_every=args.report_every,
+        rows = _score_all(lits, ids, report_every_s=args.report_every_s,
                           on_ckpt_done=_log_scoring_progress)
         df = pd.DataFrame(rows, columns=SCORE_COLUMNS
                           ).sort_values("utterance_id", kind="mergesort"
@@ -264,7 +280,12 @@ def main(argv=None) -> int:
         log_final_summary_to_wandb(df)
         return 0
     finally:
-        run.finish()
+        # exit_code reflects whether we're unwinding due to an exception --
+        # run.finish() with no args always marks the run "Finished" even
+        # when the body crashed (caught live, 2026-09-18: job 2701229
+        # crashed on filter_records's list/set type mismatch below, but
+        # still showed as a completed run in the W&B UI).
+        run.finish(exit_code=1 if sys.exc_info()[0] is not None else 0)
 
 
 if __name__ == "__main__":

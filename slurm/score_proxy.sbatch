@@ -17,8 +17,9 @@
 # lossrank/anti/el2n selectors (§3.20). Writes scores/proxy_scores.parquet
 # INTO the clone; commit-from-Ada per §5 item 12 afterwards. Logs to W&B
 # LIVE (job_type=proxy_scoring): per-checkpoint AND within-checkpoint
-# progress every --report-every (default 2000) utterances, each report
-# carrying its own chunk duration (§3.24), not just cumulative elapsed.
+# progress every --report-every-s (default 30) seconds of wall clock, each
+# report carrying an ETA plus its own chunk duration (§3.24/§3.25), not
+# just cumulative elapsed.
 #
 # Usage (from ~/spell/repo):
 #   sbatch --export=ALL,SPELL_PROXY_BUNDLE=runs/track_b/<proxy_run_id> \
