@@ -77,6 +77,44 @@ PLANS: dict[str, list[tuple]] = {
         (0, "track_b", "subsets/random_10pct_seed301.txt", 301,
          "configs/proxy_10pct.yaml", 1),
     ],
+    # P3 main grid, first wave (2026-09-18): the 12/13 roster selector cells
+    # whose manifests exist today (dnsmos's is still blocked on its Ada
+    # scoring job — added as a 13th row once that lands). Same frozen 25%
+    # config as the random floors (no per-subset tuning, PROTOCOL rule 2).
+    # Stochastic selectors (dsir/kmeans/less_ctc) use their manifest's own
+    # §3.20 identity seed; deterministic ones (el2n/lossrank/anti) have no
+    # natural subset seed (characterization JSON: subset_seed=null) so they
+    # use 0, matching task 0's (100% ceiling) existing precedent for "no
+    # real subset-seed identity" in this same schema. keep_local_traj=0:
+    # unlike the P2 proxy run, nothing downstream consumes these runs'
+    # trajectories (LESS already ran off the proxy run's own checkpoints),
+    # and the run archive's inode cap (§5.0) makes that the leaner default.
+    "slurm/run_plan_p3_selectors.tsv": [
+        (0, "track_b", "subsets/dsir_25pct_seed201.txt", 201,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (1, "track_b", "subsets/dsir_25pct_seed202.txt", 202,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (2, "track_b", "subsets/dsir_25pct_seed203.txt", 203,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (3, "track_b", "subsets/kmeans_25pct_seed201.txt", 201,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (4, "track_b", "subsets/kmeans_25pct_seed202.txt", 202,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (5, "track_b", "subsets/kmeans_25pct_seed203.txt", 203,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (6, "track_b", "subsets/less_ctc_25pct_seed201.txt", 201,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (7, "track_b", "subsets/less_ctc_25pct_seed202.txt", 202,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (8, "track_b", "subsets/less_ctc_25pct_seed203.txt", 203,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (9, "track_b", "subsets/el2n_25pct.txt", 0,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (10, "track_b", "subsets/lossrank_25pct.txt", 0,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        (11, "track_b", "subsets/anti_25pct.txt", 0,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
+    ],
 }
 
 # Per-plan banner APPENDICES (rendered after the shared BANNER; plans without
@@ -86,6 +124,12 @@ EXTRA_BANNER: dict[str, tuple[str, ...]] = {
         "# PROXY run — NOT a benchmark condition: same frozen HPs (track_b.yaml),",
         "# 20 epochs, logging.el2n_log=true (metrics.parquet-only, §3.17). Its",
         "# bundle feeds scripts/score_proxy.py -> scores/proxy_scores.parquet.",
+    ),
+    "slurm/run_plan_p3_selectors.tsv": (
+        "# P3 main grid, first wave: 12/13 roster selector cells (dnsmos still",
+        "# blocked on its scoring job). Same frozen 25% config as the random",
+        "# floors -- no per-subset tuning. Independent of any other running job;",
+        "# submit as its own array as soon as this plan file exists.",
     ),
 }
 

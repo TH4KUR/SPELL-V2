@@ -314,6 +314,26 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     _job<job_id>_t<task>`) — recorded here because it is not derivable from
     anything committed to this repo (`runs/` is gitignored) and had to be
     looked up by hand on Ada after this same incident.
+26. **P3 main grid, first wave queued (2026-09-18)**: `scripts/proxy_scores.parquet`
+    landed (job on Ada), unblocking `el2n`/`lossrank`/`anti` manifests —
+    12/13 roster selector cells now exist (`dnsmos`'s is still blocked on
+    its own still-running scoring job). `slurm/run_plan_p3_selectors.tsv`
+    (new `gen_run_plan.py` PLANS entry) queues all 12 as one array: same
+    frozen `configs/pilot_25pct_random_x2seeds.yaml` as the random floors
+    (no per-subset tuning, rule 2); stochastic selectors (dsir/kmeans/
+    less_ctc) use their manifest's own §3.20 seed, deterministic ones
+    (el2n/lossrank/anti, whose characterization JSON carries
+    `subset_seed: null`) use `0`, matching task 0's (100% ceiling)
+    existing precedent for "no real subset-seed identity" in this schema.
+    `keep_local_traj=0` for all 12 — unlike the P2 proxy run, nothing
+    downstream consumes these runs' own trajectories (LESS already ran off
+    the proxy run's checkpoints), so there is no reason to spend the run
+    archive's tight inode budget (§5.0) keeping them. This wave is
+    independent of the DNSMOS/proxy scoring jobs and needed no additional
+    phase-gate clearance beyond P1's already-passed G1/G2 anchor cells
+    (§7's "advancing-selector" recording requirement applies to the
+    LATER 5%/10% promotion gate, not this initial 25%-cell submission).
+    `dnsmos`'s cell will be appended as a 13th row once its manifest lands.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
