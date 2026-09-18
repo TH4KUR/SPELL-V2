@@ -205,6 +205,29 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     regularization freely trades off) with ranking QUALITY (which is what
     subset selection actually consumes).
 
+23. **W&B logging for research-crucial non-training runs (user policy,
+    2026-09-18)**: §3.17's live-series contract governs FORMAL Track A/B
+    TRAINING runs only — it does not exempt other runs from W&B entirely.
+    Any script whose output feeds a real research decision (a selector's
+    score table, a hyperparameter choice, a ranking used downstream) MUST
+    log to W&B by default, not only when separately asked. This is
+    STRUCTURALLY SEPARATE from §3.17: a distinct `job_type` and
+    `<tool>/`-prefixed series names (never `train/*` or `val/*`), so the two
+    surfaces can never collide or be mistaken for each other in the W&B UI,
+    and §3.17(a)'s "pin before a run may depend on it" gate does not apply
+    (nothing in the §7 phase-gate logic reads these series).
+    **Compliant**: `scripts/sweep_dsir_l2.py` (`job_type=dsir_l2_sweep`,
+    built with logging from the start) and `scripts/score_less.py`
+    (`job_type=less_scoring`, added in `a527ec8` after the user pointed out
+    the initial version shipped without it). **NOT YET compliant**:
+    `scripts/score_proxy.py`, `scripts/score_kmeans.py`,
+    `scripts/score_dsir.py`, `scripts/score_dnsmos.py` — all four predate
+    this policy and still only print to stdout / write parquet. Retrofitting
+    them is a separate, larger change (touches already-tested/shipped code)
+    and needs explicit user sign-off before it happens, not a silent
+    expansion of whatever task is in flight — but any NEW scorer/sweep/
+    analysis script from this point on ships with this from day one.
+
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
 - Trainval audio decodes from AAC mp4; official test wavs are PCM. All subsets share the
@@ -498,7 +521,12 @@ GO with a weak-effect disclosure — `scripts/sweep_dsir_l2.py`'s held-out
 cross-validation showed `weight_spread`'s dramatic swing across `l2` was
 overfitting noise, not real signal, while the genuine held-out AUC
 (≈0.57, statistically real but weak) held flat at every tested `l2`
-including the original formal `l2=1e-4` (no re-run needed).
+including the original formal `l2=1e-4` (no re-run needed);
+`wandb-crucial-runs` (2026-09-18) added §3.23 after `score_less.py` shipped
+without W&B logging — any research-crucial scorer/sweep/analysis script
+now logs by default, structurally separate from §3.17's formal-run
+contract; the four pre-existing scorers are flagged non-compliant pending
+explicit sign-off to retrofit them.
 Earlier wording remains in git history.
 
 ## 10. Known issues & permanent policies
