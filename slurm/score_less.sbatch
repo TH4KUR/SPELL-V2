@@ -18,9 +18,11 @@
 # 06:00:00 is a starting point: 4 checkpoints + a val pass vs score_proxy's 2
 # checkpoints, no-grad-only). Writes scores/less_influence_seed{201,202,203}.parquet
 # INTO the clone; commit-from-Ada per §5 item 12 afterwards. Logs to W&B
-# (job_type=less_scoring, per-seed influence stats + cross-seed spearman
-# agreement) — a run crucial to the research, per standing policy; scoped
-# away from PROTOCOL §3.17's formal-run contract.
+# LIVE per checkpoint (§3.24: run opens before scoring starts, each
+# checkpoint reports its own duration, not just cumulative elapsed), then
+# per-seed influence stats + cross-seed spearman agreement at the end —
+# a run crucial to the research, per standing policy (§3.23); scoped away
+# from PROTOCOL §3.17's formal-run contract.
 #
 # Usage (from ~/spell/repo):
 #   sbatch --export=ALL,SPELL_LESS_BUNDLE=runs/track_b/<proxy_run_id> \

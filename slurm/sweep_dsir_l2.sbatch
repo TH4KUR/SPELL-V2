@@ -16,7 +16,8 @@
 # writes nothing under scores/). Held-out cross-validation across several l2
 # values to tell "l2 was suppressing real signal" apart from "we're now
 # overfitting noise" — the ad-hoc single-point --l2 diagnostic can't
-# distinguish those. Logs to W&B under job_type=dsir_l2_sweep (see
+# distinguish those. Logs to W&B under job_type=dsir_l2_sweep, LIVE as each
+# l2 point finishes with its own duration (§3.24 — see
 # scripts/sweep_dsir_l2.py's docstring for why this doesn't touch the §3.17
 # formal-run logging contract). Writes outputs/dsir_l2_sweep.parquet.
 #

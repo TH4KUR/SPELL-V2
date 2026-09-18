@@ -216,17 +216,38 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     surfaces can never collide or be mistaken for each other in the W&B UI,
     and §3.17(a)'s "pin before a run may depend on it" gate does not apply
     (nothing in the §7 phase-gate logic reads these series).
-    **Compliant**: `scripts/sweep_dsir_l2.py` (`job_type=dsir_l2_sweep`,
-    built with logging from the start) and `scripts/score_less.py`
-    (`job_type=less_scoring`, added in `a527ec8` after the user pointed out
-    the initial version shipped without it). **NOT YET compliant**:
-    `scripts/score_proxy.py`, `scripts/score_kmeans.py`,
-    `scripts/score_dsir.py`, `scripts/score_dnsmos.py` — all four predate
-    this policy and still only print to stdout / write parquet. Retrofitting
-    them is a separate, larger change (touches already-tested/shipped code)
-    and needs explicit user sign-off before it happens, not a silent
-    expansion of whatever task is in flight — but any NEW scorer/sweep/
-    analysis script from this point on ships with this from day one.
+24. **Logging must be LIVE, with per-step timing, not a batch upload at the
+    end (amends §3.23, 2026-09-18)**: "log to W&B" is not satisfied by
+    opening the run and dumping everything just before it exits — that
+    gives zero visibility for the run's entire duration and NOTHING at all
+    if it crashes partway through, defeating the actual purpose. Every
+    §3.23 run MUST: (a) call `wandb.init` BEFORE the expensive work starts,
+    not after; (b) log progress INCREMENTALLY as each unit of work
+    (checkpoint / epoch / sweep point / seed) completes, carrying at
+    minimum a progress fraction (i/N) and that unit's OWN duration — not
+    only cumulative elapsed time, since an average hides a single slow or
+    stuck unit; (c) wrap the run body so `run.finish()` fires even on
+    failure (a crashed run stays visible, not silently absent). Caught live
+    (2026-09-18): the user watched `score_less.py`'s job sit on "checkpoint
+    2/4" with nothing in W&B — the run had not even opened yet, because the
+    original `log_to_wandb()` call sat at the very end of `main()`.
+    Re-checking the ONE other §3.23-compliant script at the time
+    (`scripts/sweep_dsir_l2.py`) found the IDENTICAL gap — `wandb.init` was
+    also called only after its full sweep finished, despite already having
+    a per-row logging loop. Both fixed the same day (`score_less.py`:
+    `_wandb_init` opens early, `_log_ckpt_progress` fires per checkpoint
+    with that checkpoint's own duration + cumulative elapsed;
+    `sweep_dsir_l2.py`: `wandb.init` moved to the top of `main()`, each l2
+    point logged as it's computed). **Compliant**: `scripts/sweep_dsir_l2.py`,
+    `scripts/score_less.py`. **NOT YET compliant**: `scripts/score_proxy.py`,
+    `scripts/score_kmeans.py`, `scripts/score_dsir.py`,
+    `scripts/score_dnsmos.py` — all four predate §3.23 entirely and still
+    only print to stdout / write parquet. Retrofitting them is a separate,
+    larger change (touches already-tested/shipped code) and needs explicit
+    user sign-off before it happens, not a silent expansion of whatever task
+    is in flight — but any NEW scorer/sweep/analysis script from this point
+    on ships with BOTH §3.23 and this item from day one, not as an
+    afterthought added after the fact.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
@@ -525,8 +546,13 @@ including the original formal `l2=1e-4` (no re-run needed);
 `wandb-crucial-runs` (2026-09-18) added §3.23 after `score_less.py` shipped
 without W&B logging — any research-crucial scorer/sweep/analysis script
 now logs by default, structurally separate from §3.17's formal-run
-contract; the four pre-existing scorers are flagged non-compliant pending
-explicit sign-off to retrofit them.
+contract; `wandb-live-progress` (same day) added §3.24 after the user
+caught, live, that even the fixed `score_less.py` only opened its W&B run
+at the very end — logging must open the run before the expensive work
+starts and report progress incrementally with each unit's own duration,
+not a batch upload at exit; `sweep_dsir_l2.py` had the identical gap and
+was fixed the same day. The four pre-existing scorers remain flagged
+non-compliant with both items pending explicit sign-off to retrofit them.
 Earlier wording remains in git history.
 
 ## 10. Known issues & permanent policies

@@ -21,6 +21,7 @@ Laws pinned here:
 from __future__ import annotations
 
 import sys
+import time
 from functools import partial
 from pathlib import Path
 
@@ -320,6 +321,44 @@ def test_influence_for_seed_mirrors_mean_across_ckpts():
     assert got == pytest.approx(expected)
 
 
+def test_grad_vecs_all_ckpts_reports_per_checkpoint_not_cumulative_duration(monkeypatch):
+    """PROTOCOL §3.24: on_ckpt_done's ckpt_s must be THAT checkpoint's own
+    duration, not the running total -- an average/cumulative-only view
+    would hide a single slow or stuck checkpoint. Three fake checkpoints
+    with deliberately uneven, distinguishable sleep times prove ckpt_s
+    tracks the delta, not elapsed_s."""
+    sleep_schedule = [0.05, 0.02, 0.08]
+    call_index = {"i": 0}
+
+    def fake_pooled(lit, ids, batch_size):
+        time.sleep(sleep_schedule[call_index["i"]])
+        return {"u/1": np.zeros(2)}
+
+    monkeypatch.setattr(S, "_pooled_grad_vecs_for_ids", fake_pooled)
+    monkeypatch.setattr(S, "_ref_vec_for_ids", lambda lit, ids, batch_size: np.zeros(2))
+
+    seen = []
+
+    def on_done(i, n, ckpt_s, elapsed_s):
+        seen.append((i, n, ckpt_s, elapsed_s))
+        call_index["i"] += 1
+
+    S._grad_vecs_all_ckpts(["ck1", "ck2", "ck3"], ["u/1"], ["u/1"],
+                          batch_size=4, on_ckpt_done=on_done)
+
+    assert [i for i, *_ in seen] == [1, 2, 3]
+    assert all(n == 3 for _, n, _, _ in seen)
+    # each checkpoint's own duration roughly matches ITS sleep, not the sum
+    for idx, (_, _, ckpt_s, _) in enumerate(seen):
+        assert ckpt_s == pytest.approx(sleep_schedule[idx], abs=0.05)
+    # cumulative elapsed strictly increases across checkpoints; the per-idx
+    # loop above is what actually proves ckpt_s tracks the DELTA rather than
+    # the running total -- if it reported cumulative elapsed instead, the
+    # 3rd checkpoint's ckpt_s would be ~0.15 (sum of all sleeps) and fail
+    # that approx(0.08) check
+    assert seen[0][3] < seen[1][3] < seen[2][3]
+
+
 # --------------------------------------------------------------------- wandb
 
 def test_spearman_perfect_agreement_and_disagreement():
@@ -349,7 +388,7 @@ def test_log_ckpt_progress_disabled_mode_runs_without_network():
     run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
                         job_id="test", bundle="runs/track_b/fake",
                         seeds=[201], proj_dim=512, batch_size=16)
-    S._log_ckpt_progress(1, 4, 12.5)
+    S._log_ckpt_progress(1, 4, 12.5, 12.5)
     run.finish()
 
 

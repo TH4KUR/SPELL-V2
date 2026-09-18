@@ -219,19 +219,25 @@ def _grad_vecs_all_ckpts(lits, train_ids: list[str], val_ids: list[str],
                          ) -> tuple[list[dict[str, np.ndarray]], list[np.ndarray]]:
     """The expensive, SEED-INDEPENDENT pass: one (train_vecs, ref_vec) pair
     per trajectory checkpoint. This is the part worth ~10s-of-minutes, so
-    `on_ckpt_done(i, n_ckpts, elapsed_s)` (if given) fires after EACH
-    checkpoint -- callers use it for live progress (W&B, print), not just a
-    single report after everything is done."""
+    `on_ckpt_done(i, n_ckpts, ckpt_s, elapsed_s)` (if given) fires after EACH
+    checkpoint -- callers use it for LIVE progress (W&B, print), not just a
+    single report after everything is done. `ckpt_s` is THAT checkpoint's
+    own duration (not just cumulative `elapsed_s`) -- PROTOCOL §3.24: an
+    average hides a single slow or stuck unit, so per-unit timing is
+    reported on its own, not folded into the running total."""
     train_vecs_per_ckpt = []
     ref_vec_per_ckpt = []
-    t0 = time.monotonic()
+    t_start = time.monotonic()
+    t_prev = t_start
     for i, lit in enumerate(lits):
         print(f"[less] checkpoint {i + 1}/{len(lits)}: scoring train pool...", flush=True)
         train_vecs_per_ckpt.append(_pooled_grad_vecs_for_ids(lit, train_ids, batch_size))
         print(f"[less] checkpoint {i + 1}/{len(lits)}: scoring val reference...", flush=True)
         ref_vec_per_ckpt.append(_ref_vec_for_ids(lit, val_ids, batch_size))
+        now = time.monotonic()
         if on_ckpt_done is not None:
-            on_ckpt_done(i + 1, len(lits), time.monotonic() - t0)
+            on_ckpt_done(i + 1, len(lits), now - t_prev, now - t_start)
+        t_prev = now
     return train_vecs_per_ckpt, ref_vec_per_ckpt
 
 
@@ -299,16 +305,21 @@ def _wandb_init(*, project: str, entity: str | None, mode: str, job_id: str,
     return run
 
 
-def _log_ckpt_progress(i: int, n_ckpts: int, elapsed_s: float) -> None:
+def _log_ckpt_progress(i: int, n_ckpts: int, ckpt_s: float, elapsed_s: float) -> None:
     """Fired after EACH trajectory checkpoint by _grad_vecs_all_ckpts's
     on_ckpt_done -- this is what makes the run show live progress instead of
-    going dark until everything finishes."""
+    going dark until everything finishes. `ckpt_s` (this checkpoint's OWN
+    duration) is reported alongside `elapsed_s` (cumulative) per PROTOCOL
+    §3.24 -- a stuck/slow checkpoint must be visible on its own, not
+    averaged away by the running total."""
     import wandb
 
     wandb.log({"less_scoring/checkpoints_done": i,
               "less_scoring/checkpoints_total": n_ckpts,
+              "less_scoring/ckpt_duration_s": ckpt_s,
               "less_scoring/elapsed_s": elapsed_s})
-    print(f"[less] checkpoint {i}/{n_ckpts} done ({elapsed_s:.0f}s elapsed)", flush=True)
+    print(f"[less] checkpoint {i}/{n_ckpts} done in {ckpt_s:.0f}s "
+          f"({elapsed_s:.0f}s total elapsed)", flush=True)
 
 
 def log_seed_summary_to_wandb(seed_influences: dict[int, dict[str, float]]) -> None:

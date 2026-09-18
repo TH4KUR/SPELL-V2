@@ -35,19 +35,23 @@ Method:
        - ALSO fit_beta on the FULL pool+val (score_dsir.py's actual real-run
          behavior) and report weight_spread, for continuity with the earlier
          ad-hoc --l2 diagnostic.
-  4. Print a table, log every point to W&B, and print a RECOMMENDATION (the
+  4. Log each l2 point to W&B AS SOON as it's computed (not batched at the
+     end — PROTOCOL §3.24), print a table, and print a RECOMMENDATION (the
      l2 with the best held_out_auc) — a human still freezes the final value
      in PROTOCOL/configs; this script does not do that automatically.
 
 W&B scoping note: this is NOT a "formal run" under PROTOCOL §3.17 (it trains
 no Track A/B model, emits no val/wer, is gated by no §7 rule) — it logs under
 job_type="dsir_l2_sweep" with dsir_sweep/*-prefixed series, entirely disjoint
-from the frozen train/val series names that contract governs.
+from the frozen train/val series names that contract governs. The run opens
+before the sweep starts and each point logs its own duration alongside
+cumulative elapsed time (§3.24) — not a single dump after everything finishes.
 """
 from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -140,7 +144,10 @@ def sweep_one_l2(X_train, X_val, fit_pool, check_pool, fit_val, check_val,
     }
 
 
-def run_sweep(l2s: list[float], every: int = 5) -> pd.DataFrame:
+def run_sweep(l2s: list[float], every: int = 5, on_point_done=None) -> pd.DataFrame:
+    """`on_point_done(idx, n_total, row, point_s, elapsed_s)` (if given) fires
+    after EACH l2 value finishes -- PROTOCOL §3.24: live progress with each
+    point's OWN duration, not a single report after the whole sweep ends."""
     train_ids, val_ids, X_train, X_val = dsir._collect_populations()
     fit_pool, check_pool = held_out_split(len(train_ids), every=every)
     fit_val, check_val = held_out_split(len(val_ids), every=every)
@@ -149,18 +156,26 @@ def run_sweep(l2s: list[float], every: int = 5) -> pd.DataFrame:
           f"val fit={len(fit_val)} check={len(check_val)}", flush=True)
 
     rows = []
-    for l2 in l2s:
+    t_start = time.monotonic()
+    t_prev = t_start
+    for idx, l2 in enumerate(l2s):
         row = sweep_one_l2(X_train, X_val, fit_pool, check_pool, fit_val, check_val, l2)
         rows.append(row)
         print(f"[sweep_dsir_l2] l2={l2:.1e} "
               f"held_out_auc={row['held_out_auc']:.4f} "
               f"held_out_logloss={row['held_out_logloss']:.4f} "
               f"weight_spread_full={row['weight_spread_full']:.4f}", flush=True)
+        now = time.monotonic()
+        if on_point_done is not None:
+            on_point_done(idx + 1, len(l2s), row, now - t_prev, now - t_start)
+        t_prev = now
     return pd.DataFrame(rows).sort_values("l2").reset_index(drop=True)
 
 
-def log_to_wandb(df: pd.DataFrame, *, project: str, entity: str | None,
-                 mode: str, job_id: str) -> None:
+def _wandb_init(*, project: str, entity: str | None, mode: str, job_id: str,
+                l2s: list[float], every: int):
+    """Opens the W&B run BEFORE the sweep starts, not after (PROTOCOL §3.24)
+    -- so partial progress (and a crash mid-sweep) are both visible."""
     import wandb
 
     run = wandb.init(project=project, entity=entity, mode=mode,
@@ -168,18 +183,41 @@ def log_to_wandb(df: pd.DataFrame, *, project: str, entity: str | None,
                      name=f"dsir-l2-sweep-{job_id}",
                      dir=str(Path(__file__).resolve().parents[1] / "outputs" / "wandb"),
                      tags=["dsir", "l2-sweep", "diagnostic"])
-    for i, r in df.iterrows():
-        wandb.log({
-            "dsir_sweep/l2": r["l2"],
-            "dsir_sweep/held_out_auc": r["held_out_auc"],
-            "dsir_sweep/held_out_logloss": r["held_out_logloss"],
-            "dsir_sweep/weight_spread_full": r["weight_spread_full"],
-        }, step=int(i))
+    wandb.config.update({"l2s": list(l2s), "every": every})
+    return run
+
+
+def _log_point_progress(idx: int, n_total: int, row: dict, point_s: float,
+                        elapsed_s: float) -> None:
+    """Fired after EACH l2 value by run_sweep's on_point_done. `point_s` is
+    THAT point's own duration -- reported alongside elapsed_s, not folded
+    into it (§3.24: an average hides a single slow point)."""
+    import wandb
+
+    wandb.log({
+        "dsir_sweep/l2": row["l2"],
+        "dsir_sweep/held_out_auc": row["held_out_auc"],
+        "dsir_sweep/held_out_logloss": row["held_out_logloss"],
+        "dsir_sweep/weight_spread_full": row["weight_spread_full"],
+        "dsir_sweep/points_done": idx,
+        "dsir_sweep/points_total": n_total,
+        "dsir_sweep/point_duration_s": point_s,
+        "dsir_sweep/elapsed_s": elapsed_s,
+    }, step=idx - 1)
+    print(f"[sweep_dsir_l2] point {idx}/{n_total} done in {point_s:.1f}s "
+          f"({elapsed_s:.1f}s total elapsed)", flush=True)
+
+
+def log_final_summary_to_wandb(df: pd.DataFrame) -> None:
+    """The full table + best-l2 recommendation, logged onto the ALREADY-OPEN
+    run from _wandb_init once every point has been logged incrementally —
+    does not init or finish the run itself."""
+    import wandb
+
     wandb.log({"dsir_sweep/table": wandb.Table(dataframe=df)})
     best = df.loc[df["held_out_auc"].idxmax()]
     wandb.run.summary["best_l2_by_held_out_auc"] = float(best["l2"])
     wandb.run.summary["best_held_out_auc"] = float(best["held_out_auc"])
-    run.finish()
 
 
 def main(argv=None) -> int:
@@ -201,20 +239,27 @@ def main(argv=None) -> int:
                     help="SLURM job id or other run tag for the W&B run name")
     args = ap.parse_args(argv)
 
-    df = run_sweep(args.l2s, every=args.every)
+    # opened BEFORE the sweep starts, not after -- partial progress (and a
+    # crash mid-sweep) stay visible in W&B (PROTOCOL §3.24)
+    run = _wandb_init(project=args.wandb_project, entity=args.wandb_entity,
+                      mode=args.wandb_mode, job_id=args.job_id,
+                      l2s=args.l2s, every=args.every)
+    try:
+        df = run_sweep(args.l2s, every=args.every, on_point_done=_log_point_progress)
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(args.out, index=False)
-    print(f"[sweep_dsir_l2] wrote {args.out}")
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(args.out, index=False)
+        print(f"[sweep_dsir_l2] wrote {args.out}")
 
-    best = df.loc[df["held_out_auc"].idxmax()]
-    print(f"[sweep_dsir_l2] RECOMMENDATION: l2={best['l2']:.1e} "
-          f"(highest held_out_auc={best['held_out_auc']:.4f}) — "
-          f"a human still freezes this in PROTOCOL/configs, this is not automatic.")
+        best = df.loc[df["held_out_auc"].idxmax()]
+        print(f"[sweep_dsir_l2] RECOMMENDATION: l2={best['l2']:.1e} "
+              f"(highest held_out_auc={best['held_out_auc']:.4f}) — "
+              f"a human still freezes this in PROTOCOL/configs, this is not automatic.")
 
-    log_to_wandb(df, project=args.wandb_project, entity=args.wandb_entity,
-                mode=args.wandb_mode, job_id=args.job_id)
-    return 0
+        log_final_summary_to_wandb(df)
+        return 0
+    finally:
+        run.finish()
 
 
 if __name__ == "__main__":

@@ -120,9 +120,42 @@ def test_run_sweep_end_to_end(monkeypatch):
     assert (df["n_check_val"] == 2).all()    # 10/5
 
 
-def test_log_to_wandb_disabled_mode_runs_without_network():
+def test_run_sweep_on_point_done_fires_per_point_with_own_duration(monkeypatch):
+    """PROTOCOL §3.24: on_point_done must fire as EACH l2 finishes, carrying
+    that point's OWN duration alongside cumulative elapsed -- not a single
+    callback after the whole sweep."""
+    monkeypatch.setattr(dsir, "_collect_populations", _synthetic_populations)
+    seen = []
+    S.run_sweep([1e-4, 1e-2, 1e-1], every=5,
+               on_point_done=lambda idx, n, row, point_s, elapsed_s:
+                   seen.append((idx, n, row["l2"], point_s, elapsed_s)))
+    assert [s[0] for s in seen] == [1, 2, 3]
+    assert all(s[1] == 3 for s in seen)
+    assert all(s[3] >= 0.0 for s in seen)          # point_s recorded
+    assert seen[0][4] <= seen[1][4] <= seen[2][4]  # elapsed_s non-decreasing
+
+
+def test_wandb_init_disabled_mode_runs_without_network():
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", l2s=[1e-4, 1e-2], every=5)
+    run.finish()
+
+
+def test_log_point_progress_disabled_mode_runs_without_network():
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", l2s=[1e-4], every=5)
+    row = {"l2": 1e-4, "held_out_auc": 0.6, "held_out_logloss": 0.5,
+          "weight_spread_full": 0.1}
+    S._log_point_progress(1, 1, row, 2.5, 2.5)
+    run.finish()
+
+
+def test_log_final_summary_to_wandb_disabled_mode_runs_without_network():
     """mode='disabled' no-ops all wandb network/credential activity -- this
-    just proves the logging code path itself is structurally correct."""
+    just proves the logging code path itself is structurally correct. Must
+    run against an already-open run, matching how main() actually calls it."""
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", l2s=[1e-4, 1e-2], every=5)
     df = pd.DataFrame({
         "l2": [1e-4, 1e-2],
         "held_out_auc": [0.6, 0.8],
@@ -131,8 +164,8 @@ def test_log_to_wandb_disabled_mode_runs_without_network():
         "n_check_pool": [8, 8],
         "n_check_val": [2, 2],
     })
-    S.log_to_wandb(df, project="spell-rq2", entity=None, mode="disabled",
-                   job_id="test")
+    S.log_final_summary_to_wandb(df)
+    run.finish()
 
 
 def test_main_cli_writes_output_and_recommends_best_auc(tmp_path, monkeypatch, capsys):
