@@ -302,6 +302,15 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     deliberately does NOT mock `filter_records`, exercising dataset.py's
     real implementation against a list-shaped `ids` (regression coverage
     for this exact class of bug, not just the count-vs-time behavior).
+    **The shared proxy model's bundle** (§3.19's P2 proxy run, task 0 of
+    `slurm/run_plan_p2_proxy.tsv`, job 2691844), which `score_proxy.py` and
+    `score_less.py` both read via `--bundle`/`SPELL_PROXY_BUNDLE`/
+    `SPELL_LESS_BUNDLE`, lives at:
+    `runs/track_b/random_10pct_seed301_seed301_job2691844_t0`
+    (per the §3.17(d) run-id namespace: `<track>/<manifest-stem>_seed<seed>
+    _job<job_id>_t<task>`) — recorded here because it is not derivable from
+    anything committed to this repo (`runs/` is gitignored) and had to be
+    looked up by hand on Ada after this same incident.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
