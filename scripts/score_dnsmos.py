@@ -186,6 +186,12 @@ def _score_all(recs, model_path: str | Path, workers: int,
             _maybe_report()
     else:
         def init():
+            # each of the `workers` processes otherwise defaults its OWN
+            # full-core intra-op thread pool, so N processes independently
+            # fight over the same N allocated CPUs -- measured to cost MORE
+            # than hop-batching would gain (2026-09-18 profiling). Pin to 1:
+            # parallelism already comes from having `workers` processes.
+            torch.set_num_threads(1)
             global _SESSION
             _SESSION = load_session(model_path)
 

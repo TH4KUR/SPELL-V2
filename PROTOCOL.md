@@ -334,6 +334,28 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     (§7's "advancing-selector" recording requirement applies to the
     LATER 5%/10% promotion gate, not this initial 25%-cell submission).
     `dnsmos`'s cell will be appended as a 13th row once its manifest lands.
+27. **`score_dnsmos.py`'s one-hop-at-a-time structure is NOT naive (checked,
+    2026-09-18)**: the user was skeptical that scoring ~3h/29k-utterance was
+    naive/suboptimal code. Checked against the actual DNS-Challenge
+    reference (`dnsmos_local.py`): identical per-hop, per-file forward-call
+    structure — batching was explicitly requested upstream (GitHub issue)
+    and rejected `wontfix` by the maintainers, so this script is a faithful
+    port, not an oversight. (Correction to an earlier assumption made THIS
+    same session: most clips do NOT self-tile down to 1 hop — the tiling
+    always lands in [9.01s, 18.02s), giving 1–9 hops, mean ≈5 — so the hop
+    loop is a real per-utterance multiplier, not negligible for this
+    dataset.) Real profiling on the vendored model DID find one genuine,
+    cheap fix, applied immediately: each of the 8 `ProcessPoolExecutor`
+    workers previously defaulted its own full-core intra-op thread pool, so
+    8 processes fought over the same 8 allocated CPUs — measured to cost
+    MORE than hop-batching would gain. `_score_all`'s worker `init()` now
+    calls `torch.set_num_threads(1)` (parallelism already comes from the 8
+    processes, zero numeric risk, zero behavior change). A larger,
+    mechanically-safe-but-bookkeeping-heavier optimization (batching hops
+    from multiple utterances into one forward call, ~1.3× additional
+    speedup measured) was investigated but NOT implemented — smaller payoff
+    for more review risk; revisit only if a future rerun's wall-clock still
+    matters after the thread-pinning fix.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
