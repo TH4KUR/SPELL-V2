@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from functools import partial
 from pathlib import Path
 
@@ -214,17 +215,23 @@ def _ref_vec_for_ids(lit, ids: list[str], batch_size: int = 16,
 
 
 def _grad_vecs_all_ckpts(lits, train_ids: list[str], val_ids: list[str],
-                         batch_size: int = 16
+                         batch_size: int = 16, on_ckpt_done=None
                          ) -> tuple[list[dict[str, np.ndarray]], list[np.ndarray]]:
     """The expensive, SEED-INDEPENDENT pass: one (train_vecs, ref_vec) pair
-    per trajectory checkpoint."""
+    per trajectory checkpoint. This is the part worth ~10s-of-minutes, so
+    `on_ckpt_done(i, n_ckpts, elapsed_s)` (if given) fires after EACH
+    checkpoint -- callers use it for live progress (W&B, print), not just a
+    single report after everything is done."""
     train_vecs_per_ckpt = []
     ref_vec_per_ckpt = []
+    t0 = time.monotonic()
     for i, lit in enumerate(lits):
         print(f"[less] checkpoint {i + 1}/{len(lits)}: scoring train pool...", flush=True)
         train_vecs_per_ckpt.append(_pooled_grad_vecs_for_ids(lit, train_ids, batch_size))
         print(f"[less] checkpoint {i + 1}/{len(lits)}: scoring val reference...", flush=True)
         ref_vec_per_ckpt.append(_ref_vec_for_ids(lit, val_ids, batch_size))
+        if on_ckpt_done is not None:
+            on_ckpt_done(i + 1, len(lits), time.monotonic() - t0)
     return train_vecs_per_ckpt, ref_vec_per_ckpt
 
 
@@ -272,12 +279,12 @@ def _spearman(a: dict[str, float], b: dict[str, float]) -> float:
     return float(rho)
 
 
-def log_to_wandb(seed_influences: dict[int, dict[str, float]], *, project: str,
-                 entity: str | None, mode: str, job_id: str, bundle: str,
-                 n_ckpts: int, proj_dim: int) -> None:
-    """W&B observability for this scoring run (SPELL-RQ2 policy: runs crucial
-    to the research get logged, not only formal Track A/B training runs).
-    Scoped OUTSIDE the PROTOCOL §3.17 formal-run contract: distinct
+def _wandb_init(*, project: str, entity: str | None, mode: str, job_id: str,
+                bundle: str, seeds: list[int], proj_dim: int, batch_size: int):
+    """Opens the W&B run EARLY (before the expensive pass starts), not just
+    at the end — SPELL-RQ2 policy (PROTOCOL §3.23): runs crucial to the
+    research get logged, including partial progress if the job dies partway
+    through. Scoped OUTSIDE the §3.17 formal-run contract: distinct
     job_type, less_scoring/*-prefixed series, never touching the frozen
     train/val series names."""
     import wandb
@@ -287,8 +294,30 @@ def log_to_wandb(seed_influences: dict[int, dict[str, float]], *, project: str,
                      name=f"less-scoring-{job_id}",
                      dir=str(Path(__file__).resolve().parents[1] / "outputs" / "wandb"),
                      tags=["less", "ctc-grad", "roster-5"])
-    wandb.config.update({"bundle": str(bundle), "n_ckpts": n_ckpts,
-                        "proj_dim": proj_dim, "seeds": sorted(seed_influences)})
+    wandb.config.update({"bundle": str(bundle), "seeds": sorted(seeds),
+                        "proj_dim": proj_dim, "batch_size": batch_size})
+    return run
+
+
+def _log_ckpt_progress(i: int, n_ckpts: int, elapsed_s: float) -> None:
+    """Fired after EACH trajectory checkpoint by _grad_vecs_all_ckpts's
+    on_ckpt_done -- this is what makes the run show live progress instead of
+    going dark until everything finishes."""
+    import wandb
+
+    wandb.log({"less_scoring/checkpoints_done": i,
+              "less_scoring/checkpoints_total": n_ckpts,
+              "less_scoring/elapsed_s": elapsed_s})
+    print(f"[less] checkpoint {i}/{n_ckpts} done ({elapsed_s:.0f}s elapsed)", flush=True)
+
+
+def log_seed_summary_to_wandb(seed_influences: dict[int, dict[str, float]]) -> None:
+    """Per-seed influence stats + cross-seed Spearman agreement, logged onto
+    the ALREADY-OPEN run from _wandb_init — this function does not init or
+    finish the run itself, so it composes with the live progress logging
+    above rather than replacing it."""
+    import wandb
+
     for seed, influence in seed_influences.items():
         vals = np.array(list(influence.values()), dtype=float)
         wandb.log({
@@ -305,7 +334,6 @@ def log_to_wandb(seed_influences: dict[int, dict[str, float]], *, project: str,
             rho = _spearman(seed_influences[s1], seed_influences[s2])
             wandb.run.summary[f"less_scoring/spearman_seed{s1}_vs_seed{s2}"] = rho
             print(f"[less] spearman(seed{s1}, seed{s2}) = {rho:.4f}", flush=True)
-    run.finish()
 
 
 def main(argv=None) -> int:
@@ -331,52 +359,59 @@ def main(argv=None) -> int:
                     help="SLURM job id or other run tag for the W&B run name")
     args = ap.parse_args(argv)
 
-    enforce_gpu_policy()
-    ckpts = _all_ckpts(args.bundle)
-    print(f"[less] full trajectory: {[Path(c).name for c in ckpts]}", flush=True)
+    # opened BEFORE the expensive pass, not after -- so partial progress
+    # (and a crash) are both visible in W&B, not just a final report
+    run = _wandb_init(project=args.wandb_project, entity=args.wandb_entity,
+                      mode=args.wandb_mode, job_id=args.job_id,
+                      bundle=str(args.bundle), seeds=args.seeds,
+                      proj_dim=args.proj_dim, batch_size=args.batch_size)
+    try:
+        enforce_gpu_policy()
+        ckpts = _all_ckpts(args.bundle)
+        print(f"[less] full trajectory: {[Path(c).name for c in ckpts]}", flush=True)
 
-    train_ids = _collect_train_records()
-    val_ids = _collect_val_records()
-    train_recs = [r for r in load_records(load_paths().index_path, split="trainval")
-                 if r.utterance_id in set(train_ids)]
-    val_recs = [r for r in load_records(load_paths().index_path, split="trainval")
-               if r.utterance_id in set(val_ids)]
-    _preflight(train_recs, k=50)
-    _preflight(val_recs, k=50)
+        train_ids = _collect_train_records()
+        val_ids = _collect_val_records()
+        train_recs = [r for r in load_records(load_paths().index_path, split="trainval")
+                     if r.utterance_id in set(train_ids)]
+        val_recs = [r for r in load_records(load_paths().index_path, split="trainval")
+                   if r.utterance_id in set(val_ids)]
+        _preflight(train_recs, k=50)
+        _preflight(val_recs, k=50)
 
-    lits = [_load_lit(c) for c in ckpts]
-    in_dim = lits[0].model.head.in_features
-    train_vecs_per_ckpt, ref_vec_per_ckpt = _grad_vecs_all_ckpts(
-        lits, train_ids, val_ids, args.batch_size)
+        lits = [_load_lit(c) for c in ckpts]
+        in_dim = lits[0].model.head.in_features
+        train_vecs_per_ckpt, ref_vec_per_ckpt = _grad_vecs_all_ckpts(
+            lits, train_ids, val_ids, args.batch_size, on_ckpt_done=_log_ckpt_progress)
 
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    val_set = set(val_ids)
-    seed_influences: dict[int, dict[str, float]] = {}
-    for seed in args.seeds:
-        influence = _influence_for_seed(train_vecs_per_ckpt, ref_vec_per_ckpt,
-                                        seed, in_dim, args.proj_dim)
-        leaked = set(influence) & val_set
-        if leaked:
-            raise ValueError(
-                f"val-leak: {len(leaked)} val ids present in the about-to-be-"
-                f"written table (§3.21) — refusing to write: "
-                f"{sorted(leaked)[:5]}")
-        seed_influences[int(seed)] = influence
-        rows = [{"utterance_id": uid, "influence": v,
-                "n_ckpts": len(train_vecs_per_ckpt)}
-               for uid, v in influence.items()]
-        df = pd.DataFrame(rows, columns=SCORE_COLUMNS).sort_values(
-            "utterance_id", kind="mergesort").reset_index(drop=True)
-        out = args.out_dir / f"less_influence_seed{int(seed)}.parquet"
-        df.to_parquet(out, index=False)
-        print(f"[less] seed={seed}: wrote {out} rows={len(df)} "
-              f"(influence min={df['influence'].min():.4f} "
-              f"max={df['influence'].max():.4f})")
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+        val_set = set(val_ids)
+        seed_influences: dict[int, dict[str, float]] = {}
+        for seed in args.seeds:
+            influence = _influence_for_seed(train_vecs_per_ckpt, ref_vec_per_ckpt,
+                                            seed, in_dim, args.proj_dim)
+            leaked = set(influence) & val_set
+            if leaked:
+                raise ValueError(
+                    f"val-leak: {len(leaked)} val ids present in the about-to-be-"
+                    f"written table (§3.21) — refusing to write: "
+                    f"{sorted(leaked)[:5]}")
+            seed_influences[int(seed)] = influence
+            rows = [{"utterance_id": uid, "influence": v,
+                    "n_ckpts": len(train_vecs_per_ckpt)}
+                   for uid, v in influence.items()]
+            df = pd.DataFrame(rows, columns=SCORE_COLUMNS).sort_values(
+                "utterance_id", kind="mergesort").reset_index(drop=True)
+            out = args.out_dir / f"less_influence_seed{int(seed)}.parquet"
+            df.to_parquet(out, index=False)
+            print(f"[less] seed={seed}: wrote {out} rows={len(df)} "
+                  f"(influence min={df['influence'].min():.4f} "
+                  f"max={df['influence'].max():.4f})")
 
-    log_to_wandb(seed_influences, project=args.wandb_project, entity=args.wandb_entity,
-                mode=args.wandb_mode, job_id=args.job_id, bundle=str(args.bundle),
-                n_ckpts=len(train_vecs_per_ckpt), proj_dim=args.proj_dim)
-    return 0
+        log_seed_summary_to_wandb(seed_influences)
+        return 0
+    finally:
+        run.finish()
 
 
 if __name__ == "__main__":

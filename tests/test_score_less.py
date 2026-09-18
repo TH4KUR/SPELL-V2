@@ -336,17 +336,37 @@ def test_spearman_uses_only_shared_ids():
     assert S._spearman(a, b) == pytest.approx(1.0)
 
 
-def test_log_to_wandb_disabled_mode_runs_without_network():
+def test_wandb_init_disabled_mode_runs_without_network():
     """mode='disabled' no-ops all wandb network/credential activity -- proves
-    the logging code path (including the cross-seed spearman computation)
-    is structurally correct without needing a live run."""
+    the run opens (and can be finished) without needing live credentials."""
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", bundle="runs/track_b/fake",
+                        seeds=[201, 202], proj_dim=512, batch_size=16)
+    run.finish()
+
+
+def test_log_ckpt_progress_disabled_mode_runs_without_network():
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", bundle="runs/track_b/fake",
+                        seeds=[201], proj_dim=512, batch_size=16)
+    S._log_ckpt_progress(1, 4, 12.5)
+    run.finish()
+
+
+def test_log_seed_summary_to_wandb_disabled_mode_runs_without_network():
+    """Proves the logging code path (including the cross-seed spearman
+    computation) is structurally correct without needing a live run. Must
+    run against an already-open run, matching how main() actually calls it
+    (after _wandb_init, before run.finish())."""
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", bundle="runs/track_b/fake",
+                        seeds=[201, 202], proj_dim=512, batch_size=16)
     seed_influences = {
         201: {"v0/1": 1.0, "v0/2": 2.0, "v0/3": 3.0},
         202: {"v0/1": 1.5, "v0/2": 2.5, "v0/3": 2.9},
     }
-    S.log_to_wandb(seed_influences, project="spell-rq2", entity=None,
-                   mode="disabled", job_id="test", bundle="runs/track_b/fake",
-                   n_ckpts=4, proj_dim=512)
+    S.log_seed_summary_to_wandb(seed_influences)
+    run.finish()
 
 
 # ------------------------------------------------------------------------ main
@@ -362,7 +382,8 @@ def _fake_main_setup(monkeypatch, train_vecs_per_ckpt, ref_vec_per_ckpt, val_ids
     monkeypatch.setattr(S, "_preflight", lambda recs, k=50: None)
     monkeypatch.setattr(
         S, "_grad_vecs_all_ckpts",
-        lambda lits, train_ids, vids, batch_size: (train_vecs_per_ckpt, ref_vec_per_ckpt))
+        lambda lits, train_ids, vids, batch_size, on_ckpt_done=None:
+            (train_vecs_per_ckpt, ref_vec_per_ckpt))
 
     class FakeHead:
         in_features = 2
@@ -401,5 +422,6 @@ def test_main_refuses_to_write_val_leaked_rows(tmp_path, monkeypatch):
 
     out = tmp_path / "scores"
     with pytest.raises(ValueError, match="val-leak"):
-        S.main(["--bundle", str(tmp_path / "b"), "--out-dir", str(out), "--seeds", "201"])
+        S.main(["--bundle", str(tmp_path / "b"), "--out-dir", str(out), "--seeds", "201",
+               "--wandb-mode", "disabled"])
     assert not out.exists() or not list(out.glob("*.parquet"))
