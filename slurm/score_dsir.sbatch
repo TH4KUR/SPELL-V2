@@ -16,7 +16,10 @@
 # sklearn). Fits hashed n-gram importance target(val) vs pool(train) —
 # deterministic; §3.20 seeds live in the laptop-side resample. Reads val
 # tokens in-job (never committed). GO/NO-GO: the printed weight_spread CV is
-# the 72h gate. Commit-from-Ada per §5 item 12 afterwards.
+# the 72h gate. Commit-from-Ada per §5 item 12 afterwards. Logs to W&B LIVE
+# (job_type=dsir_scoring): progress every --report-every-s (default 30)
+# seconds of wall clock during pool featurization, each report carrying an
+# ETA plus its own chunk duration (§3.23/§3.24/§3.25).
 #
 # SPELL_DSIR_L2 / SPELL_DSIR_OUT (optional, default to the formal run's
 # values) let a --l2 sensitivity check reuse this exact job/env setup instead
@@ -39,6 +42,7 @@ export SPELL_DATA_ROOT
 : "${SPELL_DSIR_OUT:=scores/dsir_weights.parquet}"
 source ~/envs/spell/bin/activate
 python scripts/check_storage.py --strict
-python scripts/score_dsir.py --out "$SPELL_DSIR_OUT" --l2 "$SPELL_DSIR_L2"
-echo "DONE score_dsir (l2=${SPELL_DSIR_L2} -> ${SPELL_DSIR_OUT}) — read the"
-echo "weight_spread line; commit scores/ (§5 item 12) ONLY for the formal (default) run."
+python scripts/score_dsir.py --out "$SPELL_DSIR_OUT" --l2 "$SPELL_DSIR_L2" \
+    --job-id "${SLURM_JOB_ID}"
+echo "DONE score_dsir (l2=${SPELL_DSIR_L2} -> ${SPELL_DSIR_OUT}) — check the W&B"
+echo "run, read the weight_spread line; commit scores/ (§5 item 12) ONLY for the formal (default) run."

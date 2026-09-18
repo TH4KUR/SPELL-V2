@@ -96,9 +96,9 @@ def test_output_schema_train_only_sorted(tmp_path, monkeypatch):
     feats_train[1, 3] = 1.0        # v0/1
     monkeypatch.setattr(
         S, "_collect_populations",
-        lambda: (ids, val_ids, sparse.csr_matrix(feats_train), sparse.csr_matrix(feats_val)))
+        lambda **kwargs: (ids, val_ids, sparse.csr_matrix(feats_train), sparse.csr_matrix(feats_val)))
     out = tmp_path / "scores" / "dsir_weights.parquet"
-    rc = S.main(["--out", str(out)])
+    rc = S.main(["--out", str(out), "--wandb-mode", "disabled"])
     assert rc == 0
     df = pd.read_parquet(out)
     assert list(df.columns) == ["utterance_id", "score_logit", "weight"]
@@ -115,8 +115,8 @@ def test_weight_spread_summary_printed(tmp_path, monkeypatch, capsys):
     feats_train[1, 3] = 1.0
     monkeypatch.setattr(
         S, "_collect_populations",
-        lambda: (ids, val_ids, sparse.csr_matrix(feats_train), sparse.csr_matrix(feats_val)))
-    S.main(["--out", str(tmp_path / "dsir_weights.parquet")])
+        lambda **kwargs: (ids, val_ids, sparse.csr_matrix(feats_train), sparse.csr_matrix(feats_val)))
+    S.main(["--out", str(tmp_path / "dsir_weights.parquet"), "--wandb-mode", "disabled"])
     assert "weight_spread" in capsys.readouterr().out
 
 
@@ -146,3 +146,118 @@ def test_load_stream0_uses_root_joined_path_not_bare_relpath(monkeypatch):
 
     S._load_stream0(FakeRec())
     assert seen["path"] == sentinel
+
+
+# ------------------------------------------------------------- progress/wandb
+
+def test_collect_populations_reports_on_a_time_cadence_not_a_row_count(monkeypatch):
+    """PROTOCOL §3.23/§3.24/§3.25: reporting must be scheduled by ELAPSED
+    TIME, not a fixed row count (mirrors the identical fix applied to
+    score_dnsmos.py/score_proxy.py/score_kmeans.py the same day). A fake,
+    manually-advanced clock proves reports land once report_every_s has
+    actually passed, over the POOL loop only (val is much smaller)."""
+    n = 6
+    clock = {"t": 0.0}
+    monkeypatch.setattr(S.time, "monotonic", lambda: clock["t"])
+    costs = [5.0, 5.0, 15.0, 1.0, 1.0, 1.0, 0.0]   # +1 for the single val call
+    call_index = {"i": 0}
+
+    train_ids_raw = [f"v0/{i}" for i in range(n)]
+    val_id = "v1/9"
+
+    class FakeRec:
+        def __init__(self, uid):
+            self.utterance_id = uid
+
+    fake_recs = [FakeRec(u) for u in train_ids_raw + [val_id]]
+    monkeypatch.setattr(S, "load_records", lambda index_path, split: fake_recs)
+    monkeypatch.setattr(
+        S, "load_paths",
+        lambda: type("P", (), {"index_path": "x", "splits_dir": "y"})())
+    monkeypatch.setattr(
+        S, "load_id_list",
+        lambda path: set(train_ids_raw) if Path(path).name == "train_ids.txt"
+        else {val_id})
+    monkeypatch.setattr(S, "load_protocol", lambda: type("Pr", (), {"codebook_size": 8})())
+
+    def fake_load_stream0(rec):
+        clock["t"] += costs[call_index["i"]]
+        call_index["i"] += 1
+        return np.array([0, 1, 2])
+
+    monkeypatch.setattr(S, "_load_stream0", fake_load_stream0)
+
+    seen = []
+    train_ids, val_ids, X_train, X_val = S._collect_populations(
+        report_every_s=10.0, on_progress=lambda *a: seen.append(a))
+    assert len(train_ids) == n
+    assert val_ids == [val_id]
+    assert [s[0] for s in seen] == [2, 3, 6]
+    assert all(s[1] == 6 for s in seen)
+
+
+def test_wandb_init_disabled_mode_runs_without_network():
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", l2=1e-4)
+    run.finish()
+
+
+def test_log_progress_disabled_mode_runs_without_network():
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", l2=1e-4)
+    S._log_progress(50, 100, 10.0, 20.0)
+    run.finish()
+
+
+def test_log_final_summary_to_wandb_disabled_mode_runs_without_network():
+    run = S._wandb_init(project="spell-rq2", entity=None, mode="disabled",
+                        job_id="test", l2=1e-4)
+    df = pd.DataFrame({"utterance_id": ["a", "b"], "score_logit": [-1.0, 1.0],
+                       "weight": [0.1, 0.9]})
+    S.log_final_summary_to_wandb(df, spread=0.5)
+    run.finish()
+
+
+def test_main_marks_wandb_run_failed_on_exception(monkeypatch, tmp_path):
+    """Mirrors the identical fix on score_proxy.py/score_dnsmos.py/
+    score_less.py/sweep_dsir_l2.py/score_kmeans.py (§3.25): run.finish()
+    with no args always marks the run 'Finished' even mid-crash."""
+    calls = []
+
+    class FakeRun:
+        def finish(self, exit_code=0):
+            calls.append(exit_code)
+
+    monkeypatch.setattr(S, "_wandb_init", lambda **kw: FakeRun())
+
+    def boom(**kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(S, "_collect_populations", boom)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        S.main(["--out", str(tmp_path / "dsir_weights.parquet")])
+    assert calls == [1]
+
+
+def test_main_marks_wandb_run_succeeded_on_clean_exit(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeRun:
+        def finish(self, exit_code=0):
+            calls.append(exit_code)
+
+    monkeypatch.setattr(S, "_wandb_init", lambda **kw: FakeRun())
+    monkeypatch.setattr(S, "log_final_summary_to_wandb", lambda df, spread: None)
+    ids, val_ids = ["v0/1", "v0/2"], ["v1/9"]
+    feats_val = np.zeros((1, 8), dtype=np.float32); feats_val[0, 1] = 1.0
+    feats_train = np.zeros((2, 8), dtype=np.float32)
+    feats_train[0, 2] = 1.0
+    feats_train[1, 3] = 1.0
+    monkeypatch.setattr(
+        S, "_collect_populations",
+        lambda **kwargs: (ids, val_ids, sparse.csr_matrix(feats_train), sparse.csr_matrix(feats_val)))
+
+    rc = S.main(["--out", str(tmp_path / "dsir_weights.parquet")])
+    assert rc == 0
+    assert calls == [0]

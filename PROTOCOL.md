@@ -250,14 +250,17 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     `.map()`; `score_proxy.py` reports at BOTH the per-checkpoint level and
     the within-checkpoint utterance level, since with only 2 late
     checkpoints by default a per-checkpoint-only granularity would give
-    just 2 data points for the whole job). **NOT YET compliant**:
-    `scripts/score_kmeans.py`, `scripts/score_dsir.py` — both predate §3.23
-    entirely and still only print to stdout / write parquet. Retrofitting
-    them is a separate, larger change (touches already-tested/shipped code)
-    and needs explicit user sign-off before it happens, not a silent
-    expansion of whatever task is in flight — but any NEW scorer/sweep/
-    analysis script from this point on ships with BOTH §3.23 and this item
-    from day one, not as an afterthought added after the fact.
+    just 2 data points for the whole job). **All six roster scorers are now
+    compliant** — `scripts/score_kmeans.py` and `scripts/score_dsir.py` were
+    retrofitted 2026-09-18, with explicit user sign-off, using the
+    wall-clock-cadence + ETA + exit_code-aware `run.finish()` design from
+    day one (§3.25's lessons, not the count-based first draft this section
+    originally shipped with). `score_kmeans.py` reports during
+    feature-building (the dominant per-utterance cost, before clustering);
+    `score_dsir.py` reports during pool featurization (val is much
+    smaller, not separately instrumented). Any NEW scorer/sweep/analysis
+    script from this point on ships with §3.23, this item, AND §3.25's
+    fixes from day one, not as an afterthought added after the fact.
 25. **Two more W&B/scorer bugs, both caught live on the score_proxy.py
     retrofit's first real Ada run (job 2701229, 2026-09-18) — amends §3.24
     again the same day**:
