@@ -529,6 +529,21 @@ laptop filesystem.
    `SLURM_JOB_GPUS` is unreliable on this cluster:
    `CUDA_VISIBLE_DEVICES` / `torch.cuda.get_device_name()` are the source of
    GPU truth (the drift guard reads exactly those).
+8a. **`medium` QOS per-user caps (checked 2026-09-19 via `sacctmgr show qos
+    medium format=Name,MaxSubmitPU,MaxJobsPU`)**: `MaxSubmitPU=8` (running +
+    PENDING jobs combined, per user, across the whole QOS) and `MaxJobsPU=4`
+    (of those, at most 4 may actually be RUNNING at once — the rest queue as
+    PENDING, which is fine and does not violate MaxSubmitPU). Each SLURM
+    ARRAY TASK counts as its own job against both caps — an `sbatch
+    --array=0-11` (12 tasks) is REJECTED outright with
+    `QOSMaxSubmitJobPerUserLimit` if it would push the user's total
+    (existing jobs + new array tasks) over 8, even if fewer than 8 would
+    ever run concurrently. Caught live: `sbatch --array=0-11 ...` failed
+    while a single DNSMOS scoring job was already running (1 + 12 = 13 > 8).
+    **Before submitting an array of size N, check `squeue -u $USER | wc -l`
+    (existing jobs) and keep N + existing ≤ 8** — split a larger batch into
+    multiple `sbatch --array=...` calls (e.g. tasks 0-6 now, 7-11 once
+    something else finishes) rather than one oversized submission.
 9. **Adoption rule going forward**: every future sbatch/srun/command block emitted
    in this project MUST use exactly the §5.0 names and §5.8 scheduling constants;
    if a handoff contains a stale path/name (`~/pymax`, missing `-p u22`,
