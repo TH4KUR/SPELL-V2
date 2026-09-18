@@ -356,6 +356,59 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     speedup measured) was investigated but NOT implemented — smaller payoff
     for more review risk; revisit only if a future rerun's wall-clock still
     matters after the thread-pinning fix.
+28. **P1 anchor-cell numbers — authoritative record (this section is the
+    single source of truth; supersedes any figure in HANDOFF.md or other
+    untracked notes)**. Track B, `configs/pilot_100pct.yaml` /
+    `configs/pilot_25pct_random_x2seeds.yaml`, both equal-epochs (20),
+    final-checkpoint WER:
+
+    | condition | seed(s) | final val WER |
+    |---|---|---|
+    | ceiling (100%, ~29h) | train_seed only | 0.4975 |
+    | random floor (25%) seed101 | 101 | 0.6316 |
+    | random floor (25%) seed102 | 102 | 0.6341 |
+    | random floor (25%) seed103 | 103 | 0.6303 |
+    | random floor (25%) seed104 | 104 | 0.6318 |
+    | random floor (25%) seed105 | 105 | 0.6364 |
+    | **random floor (25%), n=5** | 101–105 | **mean 0.6328, σ (pop.) 0.0022** |
+
+    This σ is THE formal n=5 random-floor σ referenced by §3.18's
+    significance criterion (`σ_diff = σ·√(1/n_sel + 1/5)`).
+29. **P3 first-wave selector-cell results vs. the §3.18 significance
+    criterion (2026-09-19, PRELIMINARY)**. All 12/13 roster manifests'
+    25% Track B cells (same config as item 28's floor), final val WER,
+    Δ = mean WER − 0.6328 (random floor mean), tested against
+    `2·σ_diff` (σ=0.0022 from item 28):
+
+    | selector | seeds | mean WER | Δ vs random | 2·σ_diff | verdict |
+    |---|---|---|---|---|---|
+    | dsir | 201,202,203 (0.6343, 0.6300, 0.6307) | 0.6317 | −0.0012 | 0.0032 | ties random |
+    | kmeans | 201,202,203 (0.6471, 0.6401, 0.6426) | 0.6433 | +0.0104 | 0.0032 | significantly WORSE |
+    | lossrank | — (0.6502) | 0.6502 | +0.0174 | 0.0047 | significantly WORSE |
+    | el2n | — (0.6596) | 0.6596 | +0.0268 | 0.0047 | significantly WORSE |
+    | less_ctc | 201,202,203 (0.6672, 0.6729, 0.6710) | 0.6704 | +0.0375 | 0.0032 | significantly WORSE |
+    | anti (intentional worst) | — (0.6721) | 0.6721 | +0.0393 | 0.0047 | significantly WORSE (as designed) |
+
+    **Headline**: no selector beats random at 25% on Track B; `dsir` ties,
+    every other selector is significantly WORSE, and `less_ctc`'s harm
+    (+0.0375) rivals the deliberately-adversarial `anti` baseline
+    (+0.0393) despite `less_ctc` passing its own internal consistency
+    check (0.998 cross-seed Spearman, §3.20-era result) — a selector can
+    be self-consistent in WHAT it ranks and still hurt training when
+    acted on. Per §7's gate, "beats random" is the promotion bar for the
+    5%/10% sweep — nothing currently clears it, so there is no candidate
+    to advance yet.
+    **PRELIMINARY — three things still needed before this is final**:
+    (a) `dnsmos`'s cell is still blocked on its own scoring job — the
+    Holm correction (§3.18(b)) needs the COMPLETE roster family, not this
+    partial one, though margins here are large enough that the verdicts
+    above are unlikely to flip; (b) `scripts/evaluate_track_b.py`'s
+    official post-hoc cross-check has not been run on ANY of these bundles
+    (including the item-28 floor/ceiling) — `verified` is `NO` across the
+    board; the numbers above are the live/primary signal per the §7
+    gate-signal policy, not yet the official one; (c) this is Track B
+    ONLY — RQ2's actual cross-track question (does this ranking pattern
+    hold on Track A) cannot be answered until Track A exists.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
