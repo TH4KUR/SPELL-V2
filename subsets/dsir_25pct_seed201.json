@@ -1,0 +1,21 @@
+{
+  "budget_rule": "universe_budget(universe, fraction), round-half-up, BY UTTERANCE COUNT",
+  "codebook_entropy_mean": 6.3202,
+  "fraction": 0.25,
+  "k": 7768,
+  "n_videos": 2645,
+  "note": "val split never sampled (\u00a72.5); drawn ids are a frozen identity \u2014 training reads this file verbatim, never re-samples",
+  "pool": "subsets/splits/train_ids.txt",
+  "pool_size": 29064,
+  "realized_hours": 7.528,
+  "schema_version": "spell-rq2-subset-char-v2",
+  "score_table": "scores/dsir_weights.parquet",
+  "selector": "dsir",
+  "selector_meta": {
+    "resample": "k w/o replacement, p \u221d exp(logit)",
+    "seed_note": "seed drives THIS laptop-side resample",
+    "target": "val split (disclosed, \u00a73.21)"
+  },
+  "subset_seed": 201,
+  "universe_size": 31071
+}

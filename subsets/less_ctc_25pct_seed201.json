@@ -1,0 +1,21 @@
+{
+  "budget_rule": "universe_budget(universe, fraction), round-half-up, BY UTTERANCE COUNT",
+  "codebook_entropy_mean": 6.2271,
+  "fraction": 0.25,
+  "k": 7768,
+  "n_videos": 2620,
+  "note": "val split never sampled (\u00a72.5); drawn ids are a frozen identity \u2014 training reads this file verbatim, never re-samples",
+  "pool": "subsets/splits/train_ids.txt",
+  "pool_size": 29064,
+  "realized_hours": 6.948,
+  "schema_version": "spell-rq2-subset-char-v2",
+  "score_table": "scores/less_influence_seed201.parquet",
+  "selector": "less_ctc",
+  "selector_meta": {
+    "rank_by": "influence desc (val reference, \u00a73.21)",
+    "seed_note": "seed lives in the Ada scorer's Rademacher projection",
+    "variant": "ctc-grad (Track B native)"
+  },
+  "subset_seed": 201,
+  "universe_size": 31071
+}

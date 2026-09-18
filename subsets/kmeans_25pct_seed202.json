@@ -1,0 +1,21 @@
+{
+  "budget_rule": "universe_budget(universe, fraction), round-half-up, BY UTTERANCE COUNT",
+  "codebook_entropy_mean": 6.0273,
+  "fraction": 0.25,
+  "k": 7768,
+  "n_videos": 2697,
+  "note": "val split never sampled (\u00a72.5); drawn ids are a frozen identity \u2014 training reads this file verbatim, never re-samples",
+  "pool": "subsets/splits/train_ids.txt",
+  "pool_size": 29064,
+  "realized_hours": 6.26,
+  "schema_version": "spell-rq2-subset-char-v2",
+  "score_table": "scores/kmeans_assignments_seed202.parquet",
+  "selector": "kmeans",
+  "selector_meta": {
+    "algorithm": "scipy kmeans2, kmeans++ init",
+    "feature": "rvq1 code histogram (L1-normalized)",
+    "quota": "round-robin across clusters, rng(seed)"
+  },
+  "subset_seed": 202,
+  "universe_size": 31071
+}
