@@ -6,11 +6,13 @@ auto-discovery depth was silently wrong and had NEVER been exercised by a
 test. These subprocess suites drive THE production script end-to-end:
 
 * refusals NAME the failed provenance check (marker alone proves nothing);
-* a trainer-shaped valid bundle drains byte-identically and empties the relay;
+* a trainer-shaped valid bundle drains byte-identically and, by default
+  (2026-09-19: copy, not move — other scripts sometimes need the relay copy
+  after draining), KEEPS the relay bundle; --prune-relay opts into deleting it;
 * mixed batches never let a refused bundle leave;
 * depth-3 discovery is EXACT — a valid-at-depth-2 decoy outside the documented
   layout is neither discovered nor touched;
-* --verify-only validates loudly and moves NOTHING.
+* --verify-only validates loudly and copies/moves NOTHING.
 """
 
 import json
@@ -150,7 +152,12 @@ def test_marker_alone_is_insufficient_provenance(layout):
 # ------------------------------------------------------------- drain success --
 
 @pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync unavailable")
-def test_valid_bundle_drains_byte_identical_and_empties_relay(layout):
+def test_valid_bundle_drains_byte_identical_and_keeps_relay_by_default(layout):
+    """COPY, not move, is the default (2026-09-19): other scripts sometimes
+    need the relay copy to still be there after draining (e.g.
+    summarize_track_b.py, run from a compute node that cannot see /share1 at
+    all). The relay bundle must survive a successful drain unless
+    --prune-relay is explicitly passed (see the test below)."""
     _, archive, runs = layout
     b = _mkbundle(runs, "track_b/good", mode="healthy")
     snapshot = {p.relative_to(b).as_posix(): p.read_bytes()
@@ -162,11 +169,29 @@ def test_valid_bundle_drains_byte_identical_and_empties_relay(layout):
     assert proc.returncode == 0, proc.stderr
     assert "VALIDATE ok track_b/good" in proc.stdout
     assert "drain: OK track_b/good ->" in proc.stdout
-    assert not b.exists()                               # relay emptied
+    assert "relay copy KEPT" in proc.stdout
+    assert b.exists()                                   # relay copy KEPT (default)
+    relay = {p.relative_to(b).as_posix(): p.read_bytes()
+             for p in sorted(b.rglob("*")) if p.is_file()}
+    assert relay == snapshot                            # untouched, byte-identical
     dst = archive / "track_b" / "good"
     drained = {p.relative_to(dst).as_posix(): p.read_bytes()
                for p in sorted(dst.rglob("*")) if p.is_file()}
-    assert drained == snapshot                          # byte-identical relay
+    assert drained == snapshot                          # byte-identical archive copy
+
+
+@pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync unavailable")
+def test_prune_relay_flag_restores_old_delete_after_verify_behavior(layout):
+    _, archive, runs = layout
+    b = _mkbundle(runs, "track_b/good", mode="healthy")
+
+    proc = _drain("--archive", str(archive), "--runs-dir", str(runs), "--prune-relay")
+
+    assert proc.returncode == 0, proc.stderr
+    assert "drain: OK track_b/good ->" in proc.stdout
+    assert "relay pruned" in proc.stdout
+    assert not b.exists()                               # --prune-relay empties it
+    assert (archive / "track_b" / "good" / "last.ckpt").is_file()
 
 
 @pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync unavailable")
@@ -181,7 +206,7 @@ def test_mixed_batch_drains_valid_and_refuses_defective(layout):
     assert proc.returncode == 1                         # SOME refusal ⇒ non-zero
     assert "VALIDATE ok track_b/good" in proc.stdout
     assert "REFUSE track_b/nok" in proc.stderr
-    assert not (runs / "track_b/good").exists()         # valid left the relay
+    assert (runs / "track_b/good").exists()             # valid KEPT in relay (copy default)
     assert (runs / "track_b/nok").is_dir()              # defective stayed
     assert (archive / "track_b/good" / "last.ckpt").is_file()
 
@@ -234,7 +259,7 @@ def test_verify_only_prints_verdicts_but_moves_nothing(layout):
     assert proc.returncode != 0                         # defect present ⇒ rc≠0
     assert "VALIDATE ok track_b/good" in proc.stdout
     assert "REFUSE track_b/nok" in proc.stderr
-    assert "--verify-only — moved nothing" in proc.stdout
+    assert "--verify-only — copied/moved nothing" in proc.stdout
     assert good.is_dir()                                # relay untouched
     assert not any(archive.rglob("*"))                  # archive still empty
 
@@ -367,7 +392,7 @@ def test_srun_transport_drains_for_real_via_shim(layout):
 
     assert proc.returncode == 0, proc.stderr
     assert "drain: OK track_b/good ->" in proc.stdout
-    assert not (runs / "track_b/good").exists()
+    assert (runs / "track_b/good").exists()             # copy default: relay kept
     assert (archive / "track_b/good" / "metrics.parquet").is_file()
 
 

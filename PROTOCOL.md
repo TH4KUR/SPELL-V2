@@ -468,7 +468,7 @@ laptop filesystem.
 | Ada python env | `~/envs/spell` (torch 2.6.0+cu124) |
 | Data root on Ada | `$HOME/spell/data` (staged Phase-0b tree; verified 99,909 files). Runtime selection via `SPELL_DATA_ROOT` — template self-defaults it (§10 item 7) |
 | Canonical archive | `/share1/$USER/spell/runs/` |
-| Relay directory | `$HOME/spell/runs/` (relay `runs_dir`; `drain_runs.sh` moves relay → archive) |
+| Relay directory | `$HOME/spell/runs/` (relay `runs_dir`; `drain_runs.sh` copies relay → archive by default, §5 item 2 amendment — `--prune-relay` restores the old delete-after-verify behavior) |
 
 `~/pymax` is a LAPTOP-ONLY fossil — its appearance anywhere Ada-facing is a bug.
 
@@ -482,8 +482,18 @@ laptop filesystem.
    item 9) — shell traps are cleanup-only;
    `scripts/drain_runs.sh` independently validates content-provenance (marker +
    metrics for both splits + loadable last.ckpt + manifest keys; refusals name
-   the failed check, `--verify-only` gates archiving) and moves validated
-   bundles to `/share1/$USER/spell/runs/` from a mounted node. Drainer probes
+   the failed check, `--verify-only` gates archiving) and COPIES validated
+   bundles to `/share1/$USER/spell/runs/` from a mounted node, KEEPING the
+   relay copy by default (amended 2026-09-19: other scripts, e.g.
+   `summarize_track_b.py` run from a compute node that cannot see `/share1`
+   at all, sometimes need the relay bundle to still be there post-drain) —
+   `--prune-relay` opts into the old delete-after-verify behavior for a given
+   invocation. Copy-by-default means the relay does NOT shrink on its own, so
+   it will climb toward the $HOME quota (item 3 below) as more runs drain
+   over the project's lifetime; `check_storage.py --strict`'s existing gate
+   (loud refusal at job start, never silent) is the backstop, and
+   `--prune-relay` (or a manual `rm -rf` of an already-archived, no-longer
+   locally-needed bundle) is the release valve when that matters. Drainer probes
    run under the FROZEN env python (`~/envs/spell/bin/python`, §5.0) — bare
    `python` on Ada login shells is CentOS-7 2.7 and cannot parse them; a probe
    that cannot run NEVER validates (empty verdict ⇒ refusal). Because the

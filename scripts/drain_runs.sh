@@ -3,7 +3,17 @@
 #
 # Compute nodes CANNOT see /share1 (mounts vary per node; verified). Runs
 # therefore bundle under runs/<track>/<run_id>/ and THIS script — executed
-# from a login/mounted node — moves validated bundles to the archive.
+# from a login/mounted node — copies validated bundles to the archive.
+#
+# COPY, not move, by default (2026-09-19): other scripts (e.g.
+# summarize_track_b.py, run from a compute node that cannot see /share1 at
+# all — §5 item 2) sometimes need the relay copy to still be there after
+# draining. The relay lives on $HOME, which has a HARD 30 GB / 300k-inode
+# quota (§5, gated loudly at every job start by check_storage.py --strict)
+# — copy-forever means the relay never shrinks on its own, so it WILL climb
+# toward that quota as more runs drain over the project's lifetime. Pass
+# --prune-relay to restore the old delete-after-verify behavior for a given
+# invocation once you're sure nothing local still needs those bundles.
 #
 # /share1 quota: 100 GB but ~3200 INODES → bundles only (ckpt + metrics.parquet,
 # <=~20 files per run). Never place loose per-utterance files on /share1.
@@ -34,9 +44,12 @@
 #
 # Usage:
 #   scripts/drain_runs.sh [--archive "/share1/$USER/spell/runs"] [--runs-dir runs]
-#                         [-n|--dry-run] [--verify-only] [RUN_ID...]
+#                         [-n|--dry-run] [--verify-only] [--prune-relay] [RUN_ID...]
 #     RUN_ID omitted -> validate+drain every marker discovered at bundle depth.
-#   --verify-only : validate everything, move NOTHING (gates archiving).
+#   --verify-only  : validate everything, copy/move NOTHING (gates archiving).
+#   --prune-relay  : after a verified byte-identical copy, DELETE the relay
+#                    source too (the old default, move-not-copy, behavior) —
+#                    opt in only once nothing local still needs the bundle.
 #   SPELL_PROBE   : 'srun' (default when a slurm client exists) | 'local'
 #                   (run scripts/drain_probe.py in THIS shell).
 #   PYTHON_BIN    : local mode — probe interpreter (default $HOME/envs/spell/
@@ -52,6 +65,7 @@ ARCHIVE="${SPELL_ARCHIVE_ROOT:-/share1/${USER}/spell/runs}"   # FROZEN archive (
 RUNS_DIR="runs"
 DRY_RUN=0
 VERIFY_ONLY=0
+PRUNE_RELAY=0
 IDS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -59,6 +73,7 @@ while [[ $# -gt 0 ]]; do
         --runs-dir) RUNS_DIR="$2"; shift 2;;
         -n|--dry-run) DRY_RUN=1; shift;;
         --verify-only) VERIFY_ONLY=1; DRY_RUN=1; shift;;
+        --prune-relay) PRUNE_RELAY=1; shift;;
         *) IDS+=("$1"); shift;;
     esac
 done
@@ -262,14 +277,18 @@ if (( VERIFY_ONLY == 0 )); then
         rsync -a --checksum "$src/" "$dst/" \
             || { echo "rsync FAILED draining $run_id (partial copy removed)" >&2; \
                  rm -rf "$dst"; exit 1; }
-        # verify byte-identical copy BEFORE removing the source bundle
+        # verify byte-identical copy BEFORE touching the source bundle
         diff -r "$src" "$dst" >/dev/null \
             || { echo "VERIFY FAILED for $run_id" >&2; exit 1; }
-        rm -rf "$src"
-        echo "drain: OK $run_id -> $dst"
+        if (( PRUNE_RELAY == 1 )); then
+            rm -rf "$src"
+            echo "drain: OK $run_id -> $dst (relay pruned)"
+        else
+            echo "drain: OK $run_id -> $dst (relay copy KEPT — pass --prune-relay to remove it)"
+        fi
     done
 else
-    echo "drain: --verify-only — moved nothing."
+    echo "drain: --verify-only — copied/moved nothing."
 fi
 
 echo "drain: done (valid=$n_valid refused=$n_refused)"
