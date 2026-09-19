@@ -1,0 +1,19 @@
+{
+  "budget_rule": "universe_budget(universe, fraction), round-half-up, BY UTTERANCE COUNT",
+  "codebook_entropy_mean": 6.6623,
+  "fraction": 0.25,
+  "k": 7768,
+  "n_videos": 2122,
+  "note": "val split never sampled (\u00a72.5); drawn ids are a frozen identity \u2014 training reads this file verbatim, never re-samples",
+  "pool": "subsets/splits/train_ids.txt",
+  "pool_size": 29064,
+  "realized_hours": 9.293,
+  "schema_version": "spell-rq2-subset-char-v2",
+  "score_table": "scores/dnsmos_scores.parquet",
+  "selector": "dnsmos",
+  "selector_meta": {
+    "rank_by": "ovr_mos desc, utterance_id asc (calibrated DNSMOS v8)"
+  },
+  "subset_seed": null,
+  "universe_size": 31071
+}
