@@ -425,13 +425,13 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     SESSION-LOCAL (not prefix-inclusive) deliberately — mixing a resumed
     prefix count into `done/elapsed_s` would make both wildly wrong (e.g.
     dividing 23,856 resumed + 50 new rows by 5 session-elapsed seconds).
-    (b) `slurm/score_dnsmos.sbatch`'s `--time` is now OMITTED rather than
-    bumped again — falls back to the u22/medium QOS's own `MaxWall`, which
-    (§5 item 8a) is 4 days, so this is not a meaningful cap in practice for
-    this job. The checkpoint above is still what actually fixes the
-    LOSS-of-work problem, not the wall itself — a node failure, preemption,
-    or `scancel` would bypass any `--time` value entirely and still need
-    the checkpoint to avoid losing completed work.
+    (b) **SUPERSEDED same day, see item 31** — `--time` was first OMITTED
+    entirely on the (wrong) assumption that this falls back to the
+    medium QOS's generous `MaxWall` (4 days, §5 item 8a); it does not. The
+    checkpoint above is still what actually fixes the LOSS-of-work
+    problem, not the wall itself — a node failure, preemption, or
+    `scancel` would bypass any `--time` value entirely and still need the
+    checkpoint to avoid losing completed work.
     (c) all six W&B-logging scripts' `finally:` blocks (`score_dnsmos.py`,
     `score_proxy.py`, `score_kmeans.py`, `score_dsir.py`, `score_less.py`,
     `sweep_dsir_l2.py`) now log the actual exception onto `run.summary`
@@ -441,6 +441,25 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     returned by `_wandb_init`, not the global `wandb.run` — the latter
     would be `None` in any test that mocks `_wandb_init` with a fake run
     object rather than calling real `wandb.init()`.
+31. **Omitting `--time` is WRONG — it does NOT fall back to the QOS's
+    `MaxWall` (corrects item 30(b), same day, 2026-09-19)**: job 2704082
+    was submitted with no `--time` and was killed after only ~59 minutes
+    at 24.6% done — `scontrol show partition u22 | grep DefaultTime` shows
+    `DefaultTime=01:00:00`. **The mechanism**: when `--time` is unset,
+    SLURM applies the PARTITION's `DefaultTime`, not the QOS's `MaxWall` —
+    these are two independent settings; `MaxWall` only bounds what you are
+    ALLOWED to request via `--time`, it is not what you get by leaving
+    `--time` unset. `slurm/score_dnsmos.sbatch` now sets an EXPLICIT
+    `--time=08:00:00`, sized off real observed throughput WITH the
+    thread-pinning fix (§3.27) active: ~2.02 utt/s → ~4h for the full
+    29,064-utt pool, so 8h gives 2x margin. **Standing rule for every
+    sbatch file in this project: always pass an explicit `--time` sized
+    from real observed throughput (with margin) — never omit it and never
+    assume a QOS-level setting fills the gap.** Job 2704082's ~59 minutes
+    of progress was NOT lost this time — the checkpoint/resume feature
+    (item 30(a)) already existed when this job ran, so a resubmission of
+    the identical command resumed from `scores/dnsmos_scores.partial.parquet`
+    instead of restarting at utterance 0.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
@@ -641,10 +660,13 @@ laptop filesystem.
     something else finishes) rather than one oversized submission.
     **`MaxWall=4-00:00:00`** (4 days, checked the same way via
     `sacctmgr show qos medium format=Name,MaxWall`) is the QOS's own wall-clock
-    ceiling — far above anything this project's jobs need, so omitting
-    `--time` (§3.30(b)) genuinely does NOT get capped by the QOS in
-    practice; a job would need to run for days before this limit, rather
-    than a self-imposed `--time`, became the binding constraint.
+    ceiling on what a job may REQUEST via `--time` — it is NOT applied when
+    `--time` is left unset. **Corrected, §3.31**: omitting `--time` instead
+    falls back to the u22 PARTITION's `DefaultTime` (`scontrol show
+    partition u22`), a separate, independent, and much shorter setting
+    (`01:00:00`) — job 2704082 was killed after only ~59 minutes finding
+    this out live. Always pass an explicit `--time`; never omit it on the
+    assumption that a generous QOS `MaxWall` fills the gap.
 9. **Adoption rule going forward**: every future sbatch/srun/command block emitted
    in this project MUST use exactly the §5.0 names and §5.8 scheduling constants;
    if a handoff contains a stale path/name (`~/pymax`, missing `-p u22`,
