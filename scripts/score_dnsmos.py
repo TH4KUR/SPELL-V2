@@ -24,6 +24,7 @@ on any plausible range, so the ranking is invariant to the raw-scale ambiguity
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -135,6 +136,41 @@ def _preflight(recs, k: int = 50) -> None:
     data_paths.preflight_resolve(recs, k=min(k, len(recs)), kind="audio")
 
 
+def checkpoint_path_for(out: Path) -> Path:
+    """Where in-progress rows are periodically saved -- derived from --out so
+    a resume needs no extra flag. Job 2701385 (2026-09-19) hit its 6h SLURM
+    wall at 82.1% done and lost ALL of it: nothing was ever written to disk
+    before the final `df.to_parquet(args.out)`, so a mid-run kill (--time
+    wall, preemption, node failure) discarded hours of already-completed
+    work. This exists so that stops being possible."""
+    return out.with_name(out.stem + ".partial" + out.suffix)
+
+
+def _atomic_write_parquet(df: pd.DataFrame, path: Path) -> None:
+    """Write-then-rename: a kill mid-write leaves the OLD checkpoint intact
+    (POSIX rename is atomic) instead of a truncated, unreadable parquet
+    file -- otherwise the crash-safety this exists for could itself be the
+    thing that corrupts the checkpoint."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+
+
+def load_checkpoint(path: Path) -> list[dict]:
+    """Rows already scored by a PRIOR (killed/timed-out) attempt, or [] if
+    there's no checkpoint / it can't be read (never fatal -- worst case is
+    re-scoring rows that were already done, not losing the ability to run
+    at all)."""
+    if not path.exists():
+        return []
+    try:
+        return pd.read_parquet(path).to_dict("records")
+    except Exception as e:
+        print(f"[dnsmos] WARNING: checkpoint {path} unreadable ({e}) -- "
+              f"starting fresh", file=sys.stderr)
+        return []
+
+
 def _score_chunk(tasks_chunk: list[tuple[str, str]]) -> list[dict]:
     """One ProcessPoolExecutor unit of work — a small batch, not the whole
     task list, so cheap IPC batching survives switching to as_completed()
@@ -144,7 +180,8 @@ def _score_chunk(tasks_chunk: list[tuple[str, str]]) -> list[dict]:
 
 def _score_all(recs, model_path: str | Path, workers: int,
                report_every_s: float = 30.0, chunk_size: int = 16,
-               on_progress=None) -> list[dict]:
+               on_progress=None, checkpoint_path: Path | None = None,
+               checkpoint_prefix_rows: list[dict] | None = None) -> list[dict]:
     """`on_progress(done, total, chunk_s, elapsed_s)` (if given) fires at
     least every `report_every_s` seconds of WALL-CLOCK time (plus once more
     at the very end) — PROTOCOL §3.24.
@@ -160,23 +197,45 @@ def _score_all(recs, model_path: str | Path, workers: int,
     Both are fixed here: reporting is scheduled by elapsed time, not item
     count, and chunks are consumed via as_completed() so a fast chunk is
     visible the moment it finishes, regardless of its position in the task
-    list."""
+    list.
+
+    If `checkpoint_path` is given, `checkpoint_prefix_rows` (rows already
+    scored by a prior, killed attempt -- see `load_checkpoint`) plus every
+    row scored so far THIS run are written there on the SAME cadence as
+    progress reports (job 2701385, 2026-09-19: hit its SLURM --time wall at
+    82.1% done with NOTHING ever written to disk, losing ~5 hours of
+    completed work). `recs` must already exclude anything in
+    `checkpoint_prefix_rows` -- this function does not itself skip rows."""
     tasks = [(r.utterance_id, str(resolve_audio_for(r))) for r in recs]
     n_total = len(tasks)
     t_start = time.monotonic()
     t_prev = t_start
     t_last_report = t_start
     rows: list[dict] = []
+    prefix = checkpoint_prefix_rows or []
 
     def _maybe_report(force: bool = False) -> None:
         nonlocal t_prev, t_last_report
-        if on_progress is None:
-            return
+        due = force
         now = time.monotonic()
-        if force or now - t_last_report >= report_every_s:
+        if not due and now - t_last_report >= report_every_s:
+            due = True
+        if not due:
+            return
+        if checkpoint_path is not None and rows:
+            _atomic_write_parquet(
+                pd.DataFrame(prefix + rows, columns=SCORE_COLUMNS), checkpoint_path)
+        if on_progress is not None:
+            # SESSION-LOCAL counts, deliberately not prefix-inclusive -- rate
+            # and ETA are done/elapsed_s, and elapsed_s only covers THIS
+            # session, so mixing in a resumed prefix would make both wildly
+            # wrong (e.g. dividing 23,856 resumed + 50 new rows by 5 elapsed
+            # seconds). Callers that want an "overall including resume"
+            # figure add `len(checkpoint_prefix_rows)` themselves for
+            # DISPLAY only, separately from this rate calculation.
             on_progress(len(rows), n_total, now - t_prev, now - t_start)
-            t_prev = now
-            t_last_report = now
+        t_prev = now
+        t_last_report = now
 
     if workers <= 1:
         global _SESSION
@@ -272,18 +331,32 @@ def main(argv=None) -> int:
                     default="online")
     ap.add_argument("--job-id", default="local",
                     help="SLURM job id or other run tag for the W&B run name")
+    ap.add_argument("--fresh", action="store_true",
+                    help="ignore/discard any existing checkpoint and start over")
     args = ap.parse_args(argv)
 
     recs = _collect_train_records()
     if args.limit is not None:
         recs = recs[: args.limit]
 
+    ckpt_path = checkpoint_path_for(args.out)
+    if args.fresh:
+        ckpt_path.unlink(missing_ok=True)
+        done_rows: list[dict] = []
+    else:
+        done_rows = load_checkpoint(ckpt_path)
+    done_ids = {r["utterance_id"] for r in done_rows}
+    if done_rows:
+        recs = [r for r in recs if r.utterance_id not in done_ids]
+        print(f"[dnsmos] resuming from {ckpt_path}: {len(done_ids)} already "
+              f"scored, {len(recs)} remaining", flush=True)
+
     # opened BEFORE the expensive pass, not after -- so partial progress
     # (and a crash, or a SLURM --time wall) are both visible in W&B
     run = _wandb_init(project=args.wandb_project, entity=args.wandb_entity,
                       mode=args.wandb_mode, job_id=args.job_id,
                       model_path=str(args.model), workers=args.workers,
-                      n_recs=len(recs))
+                      n_recs=len(recs) + len(done_rows))
     try:
         print(f"[dnsmos] scoring {len(recs)} train-pool utterances "
               f"model={args.model.name}", flush=True)
@@ -291,12 +364,15 @@ def main(argv=None) -> int:
         rows = _score_all(recs, args.model, args.workers,
                           report_every_s=args.report_every_s,
                           chunk_size=args.chunk_size,
-                          on_progress=_log_scoring_progress)
+                          on_progress=_log_scoring_progress,
+                          checkpoint_path=ckpt_path,
+                          checkpoint_prefix_rows=done_rows)
 
-        df = pd.DataFrame(rows, columns=SCORE_COLUMNS).sort_values(
+        df = pd.DataFrame(done_rows + rows, columns=SCORE_COLUMNS).sort_values(
             "utterance_id", kind="mergesort").reset_index(drop=True)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(args.out, index=False)
+        ckpt_path.unlink(missing_ok=True)   # superseded by the complete --out
         print(f"[dnsmos] wrote {args.out}: rows={len(df)}")
         print(f"[dnsmos] ovr_mos empirical min={df['ovr_mos'].min():.4f} "
               f"max={df['ovr_mos'].max():.4f} mean={df['ovr_mos'].mean():.4f} "
@@ -310,7 +386,16 @@ def main(argv=None) -> int:
         # score_proxy.py crash still showed as a completed run in the W&B
         # UI). sys.exc_info() is non-None here iff an exception is
         # currently propagating through this finally block.
-        run.finish(exit_code=1 if sys.exc_info()[0] is not None else 0)
+        exc_type, exc_value, exc_tb = sys.exc_info()
+        if exc_type is not None:
+            # the exit_code alone says "this failed" with no way to tell
+            # WHAT from the W&B UI -- the actual message/traceback used to
+            # only exist in the SLURM .err log. Log it onto the run itself.
+            import traceback
+            run.summary["error"] = f"{exc_type.__name__}: {exc_value}"
+            run.summary["traceback"] = "".join(
+                traceback.format_exception(exc_type, exc_value, exc_tb))
+        run.finish(exit_code=1 if exc_type is not None else 0)
 
 
 if __name__ == "__main__":

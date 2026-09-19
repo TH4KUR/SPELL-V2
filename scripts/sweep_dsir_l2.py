@@ -263,7 +263,13 @@ def main(argv=None) -> int:
         # run.finish() with no args always marks the run "Finished" even
         # when the body crashed (caught live, 2026-09-18, on score_proxy.py's
         # identical finally: block -- the same gap existed here).
-        run.finish(exit_code=1 if sys.exc_info()[0] is not None else 0)
+        exc_type, exc_value, exc_tb = sys.exc_info()
+        if exc_type is not None:
+            import traceback
+            run.summary["error"] = f"{exc_type.__name__}: {exc_value}"
+            run.summary["traceback"] = "".join(
+                traceback.format_exception(exc_type, exc_value, exc_tb))
+        run.finish(exit_code=1 if exc_type is not None else 0)
 
 
 if __name__ == "__main__":

@@ -229,10 +229,14 @@ def test_main_marks_wandb_run_failed_on_exception(monkeypatch, tmp_path):
     calls = []
 
     class FakeRun:
+        def __init__(self):
+            self.summary = {}
+
         def finish(self, exit_code=0):
             calls.append(exit_code)
 
-    monkeypatch.setattr(S, "_wandb_init", lambda **kw: FakeRun())
+    fake_run = FakeRun()
+    monkeypatch.setattr(S, "_wandb_init", lambda **kw: fake_run)
     monkeypatch.setattr(S, "_collect_train_records", lambda: ["v0/1"])
     monkeypatch.setattr(S, "enforce_gpu_policy", lambda: {"gpu_name": "fake"})
 
@@ -244,6 +248,8 @@ def test_main_marks_wandb_run_failed_on_exception(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="boom"):
         S.main(["--bundle", str(tmp_path / "b")])
     assert calls == [1]
+    assert "RuntimeError: boom" in fake_run.summary["error"]
+    assert "boom" in fake_run.summary["traceback"]
 
 
 def test_main_marks_wandb_run_succeeded_on_clean_exit(monkeypatch, tmp_path):

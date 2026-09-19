@@ -198,10 +198,14 @@ def test_main_marks_wandb_run_failed_on_exception(monkeypatch, tmp_path):
     calls = []
 
     class FakeRun:
+        def __init__(self):
+            self.summary = {}
+
         def finish(self, exit_code=0):
             calls.append(exit_code)
 
-    monkeypatch.setattr(S, "_wandb_init", lambda **kw: FakeRun())
+    fake_run = FakeRun()
+    monkeypatch.setattr(S, "_wandb_init", lambda **kw: fake_run)
     monkeypatch.setattr(S, "_collect_train_records", lambda: [_rec("v0/1")])
 
     def boom(recs, k=50):
@@ -212,6 +216,8 @@ def test_main_marks_wandb_run_failed_on_exception(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="boom"):
         S.main(["--out", str(tmp_path / "out.parquet")])
     assert calls == [1]
+    assert "RuntimeError: boom" in fake_run.summary["error"]
+    assert "boom" in fake_run.summary["traceback"]
 
 
 def test_main_marks_wandb_run_succeeded_on_clean_exit(monkeypatch, tmp_path):
@@ -245,6 +251,103 @@ def test_log_final_summary_to_wandb_disabled_mode_runs_without_network():
                        {"utterance_id": "v0/2", "ovr_mos": 3.5}])
     S.log_final_summary_to_wandb(df)
     run.finish()
+
+
+# ------------------------------------------------------------- checkpoint/resume
+
+def test_score_all_writes_checkpoint_merging_prefix_and_new_rows(monkeypatch, tmp_path):
+    """Job 2701385 (2026-09-19) hit its SLURM --time wall at 82.1% done with
+    NOTHING ever written to disk -- ~5 hours of completed work lost. The
+    checkpoint must be written on the same live cadence as progress
+    reports, and must contain BOTH the prior (already-done) rows AND
+    everything scored so far this session."""
+    recs = [_rec(f"v0/{i}") for i in range(3)]
+    monkeypatch.setattr(S, "resolve_audio_for", lambda rec: tmp_path / "a.flac")
+    monkeypatch.setattr(S, "load_session", lambda model_path: object())
+
+    def fake_score_one(task):
+        uid, _ = task
+        return {"utterance_id": uid, "sig_raw": 1.0, "bak_raw": 2.0, "ovr_raw": 3.0,
+                "sig_mos": 1.0, "bak_mos": 2.0, "ovr_mos": 3.0, "n_hops": 1}
+
+    monkeypatch.setattr(S, "_score_one", fake_score_one)
+
+    ckpt = tmp_path / "out.partial.parquet"
+    prefix = [{"utterance_id": "v0/prev", "sig_raw": 9.0, "bak_raw": 9.0, "ovr_raw": 9.0,
+              "sig_mos": 9.0, "bak_mos": 9.0, "ovr_mos": 9.0, "n_hops": 1}]
+
+    rows = S._score_all(recs, "fake-model.pt", workers=1, report_every_s=0.0,
+                        checkpoint_path=ckpt, checkpoint_prefix_rows=prefix)
+    assert len(rows) == 3
+    assert not ckpt.with_suffix(ckpt.suffix + ".tmp").exists()   # tmp cleaned up
+    on_disk = pd.read_parquet(ckpt)
+    assert set(on_disk["utterance_id"]) == {"v0/prev", "v0/0", "v0/1", "v0/2"}
+
+
+def test_load_checkpoint_missing_file_returns_empty():
+    assert S.load_checkpoint(Path("/no/such/checkpoint.parquet")) == []
+
+
+def test_load_checkpoint_corrupt_file_returns_empty_not_raising(tmp_path):
+    bad = tmp_path / "bad.parquet"
+    bad.write_text("not a parquet file")
+    assert S.load_checkpoint(bad) == []
+
+
+def test_main_resumes_from_checkpoint_and_skips_already_done_ids(monkeypatch, tmp_path):
+    recs = [_rec(u) for u in ("v0/1", "v0/2", "v0/3")]
+    monkeypatch.setattr(S, "_collect_train_records", lambda: recs)
+    monkeypatch.setattr(S, "_preflight", lambda recs, k=50: None)
+
+    out = tmp_path / "scores" / "out.parquet"
+    ckpt = S.checkpoint_path_for(out)
+    ckpt.parent.mkdir(parents=True)
+    prev_row = {"utterance_id": "v0/1", "sig_raw": 9.0, "bak_raw": 9.0, "ovr_raw": 9.0,
+               "sig_mos": 9.0, "bak_mos": 9.0, "ovr_mos": 9.0, "n_hops": 1}
+    pd.DataFrame([prev_row], columns=S.SCORE_COLUMNS).to_parquet(ckpt, index=False)
+
+    seen_recs = {}
+
+    def fake_score_all(recs, model, workers, **kwargs):
+        seen_recs["ids"] = [r.utterance_id for r in recs]
+        return [{"utterance_id": r.utterance_id, "sig_raw": 1.0, "bak_raw": 2.0,
+                 "ovr_raw": 3.0, "sig_mos": 1.0, "bak_mos": 2.0, "ovr_mos": 3.0,
+                 "n_hops": 1} for r in recs]
+
+    monkeypatch.setattr(S, "_score_all", fake_score_all)
+    rc = S.main(["--out", str(out), "--workers", "1", "--wandb-mode", "disabled"])
+    assert rc == 0
+    assert seen_recs["ids"] == ["v0/2", "v0/3"]     # v0/1 skipped, already checkpointed
+    df = pd.read_parquet(out)
+    assert list(df["utterance_id"]) == ["v0/1", "v0/2", "v0/3"]   # merged + sorted
+    assert not ckpt.exists()                        # superseded by the complete --out
+
+
+def test_main_fresh_flag_ignores_existing_checkpoint(monkeypatch, tmp_path):
+    recs = [_rec(u) for u in ("v0/1", "v0/2")]
+    monkeypatch.setattr(S, "_collect_train_records", lambda: recs)
+    monkeypatch.setattr(S, "_preflight", lambda recs, k=50: None)
+
+    out = tmp_path / "scores" / "out.parquet"
+    ckpt = S.checkpoint_path_for(out)
+    ckpt.parent.mkdir(parents=True)
+    prev_row = {"utterance_id": "v0/1", "sig_raw": 9.0, "bak_raw": 9.0, "ovr_raw": 9.0,
+               "sig_mos": 9.0, "bak_mos": 9.0, "ovr_mos": 9.0, "n_hops": 1}
+    pd.DataFrame([prev_row], columns=S.SCORE_COLUMNS).to_parquet(ckpt, index=False)
+
+    seen_recs = {}
+
+    def fake_score_all(recs, model, workers, **kwargs):
+        seen_recs["ids"] = [r.utterance_id for r in recs]
+        return [{"utterance_id": r.utterance_id, "sig_raw": 1.0, "bak_raw": 2.0,
+                 "ovr_raw": 3.0, "sig_mos": 1.0, "bak_mos": 2.0, "ovr_mos": 3.0,
+                 "n_hops": 1} for r in recs]
+
+    monkeypatch.setattr(S, "_score_all", fake_score_all)
+    rc = S.main(["--out", str(out), "--workers", "1", "--wandb-mode", "disabled",
+                "--fresh"])
+    assert rc == 0
+    assert seen_recs["ids"] == ["v0/1", "v0/2"]     # nothing skipped
 
 
 def test_real_model_runs_end_to_end(tmp_path):

@@ -409,6 +409,36 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     gate-signal policy, not yet the official one; (c) this is Track B
     ONLY — RQ2's actual cross-track question (does this ranking pattern
     hold on Track A) cannot be answered until Track A exists.
+30. **Checkpoint/resume for score_dnsmos.py + error logging to W&B for all
+    six scorers (2026-09-19)**. Job 2701385 hit `slurm/score_dnsmos.sbatch`'s
+    `--time=06:00:00` wall at 82.1% done (23,856/29,064 utterances,
+    `sacct`-confirmed `TIMEOUT`) with NOTHING written to disk — the entire
+    job wrote `scores/dnsmos_scores.parquet` only once, at the very end, so
+    the kill discarded ~5 hours of already-completed work outright. Fixed:
+    (a) `_score_all` now writes a checkpoint (`<out>.partial.parquet`, atomic
+    write-then-`os.replace`) on the SAME live cadence as its W&B progress
+    reports; `main()` loads it on startup (unless `--fresh`), skips
+    already-scored utterance_ids, and merges checkpoint + freshly-scored
+    rows into the final `--out` before deleting the checkpoint — a
+    resubmission of the identical command now resumes instead of
+    restarting at utterance 0. Progress-callback rate/ETA math stays
+    SESSION-LOCAL (not prefix-inclusive) deliberately — mixing a resumed
+    prefix count into `done/elapsed_s` would make both wildly wrong (e.g.
+    dividing 23,856 resumed + 50 new rows by 5 session-elapsed seconds).
+    (b) `slurm/score_dnsmos.sbatch`'s `--time` is now OMITTED rather than
+    bumped again — falls back to the u22/medium partition-or-QOS default,
+    which is NOT a guarantee of unlimited time (check `sacctmgr show qos
+    medium format=Name,MaxWall` if that matters); the checkpoint above is
+    what actually fixes the LOSS-of-work problem, not the wall itself.
+    (c) all six W&B-logging scripts' `finally:` blocks (`score_dnsmos.py`,
+    `score_proxy.py`, `score_kmeans.py`, `score_dsir.py`, `score_less.py`,
+    `sweep_dsir_l2.py`) now log the actual exception onto `run.summary`
+    (`error`, `traceback`) before `run.finish(exit_code=1)` — previously
+    exit_code=1 told you a run failed but not WHAT failed; that used to
+    require grepping the SLURM `.err` log. Uses the LOCAL `run` object
+    returned by `_wandb_init`, not the global `wandb.run` — the latter
+    would be `None` in any test that mocks `_wandb_init` with a fake run
+    object rather than calling real `wandb.init()`.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
