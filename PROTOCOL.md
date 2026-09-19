@@ -383,40 +383,50 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     This σ is THE formal n=5 random-floor σ referenced by §3.18's
     significance criterion (`σ_diff = σ·√(1/n_sel + 1/5)`).
 29. **P3 first-wave selector-cell results vs. the §3.18 significance
-    criterion (2026-09-19, PRELIMINARY)**. All 12/13 roster manifests'
-    25% Track B cells (same config as item 28's floor), final val WER,
-    Δ = mean WER − 0.6328 (random floor mean), tested against
-    `2·σ_diff` (σ=0.0022 from item 28):
+    criterion — FINAL for Track B at 25% (2026-09-19)**. All 13/13 roster
+    manifests' 25% Track B cells (same config as item 28's floor), final
+    val WER, Δ = mean WER − 0.6328 (random floor mean), tested against
+    `2·σ_diff` (σ=0.0022 from item 28), Holm-Bonferroni corrected across
+    the full 6-method family (excludes `anti`, the intentional control,
+    from the correction family — it is not a candidate selector):
 
-    | selector | seeds | mean WER | Δ vs random | 2·σ_diff | verdict |
-    |---|---|---|---|---|---|
-    | dsir | 201,202,203 (0.6343, 0.6300, 0.6307) | 0.6317 | −0.0012 | 0.0032 | ties random |
-    | kmeans | 201,202,203 (0.6471, 0.6401, 0.6426) | 0.6433 | +0.0104 | 0.0032 | significantly WORSE |
-    | lossrank | — (0.6502) | 0.6502 | +0.0174 | 0.0047 | significantly WORSE |
-    | el2n | — (0.6596) | 0.6596 | +0.0268 | 0.0047 | significantly WORSE |
-    | less_ctc | 201,202,203 (0.6672, 0.6729, 0.6710) | 0.6704 | +0.0375 | 0.0032 | significantly WORSE |
-    | anti (intentional worst) | — (0.6721) | 0.6721 | +0.0393 | 0.0047 | significantly WORSE (as designed) |
+    | rank | selector | seeds | mean WER | Δ vs random | z | p | Holm threshold | verdict |
+    |---|---|---|---|---|---|---|---|---|
+    | 1 | el2n | — (0.6596) | 0.6596 | +0.0268 | 11.31 | ~0 | 0.0083 | survives — significantly WORSE |
+    | 2 | less_ctc | 201,202,203 (0.6672, 0.6729, 0.6710) | 0.6704 | +0.0375 | 23.79 | ~0 | 0.0100 | survives — significantly WORSE |
+    | 3 | lossrank | — (0.6502) | 0.6502 | +0.0174 | 7.34 | ~0 | 0.0125 | survives — significantly WORSE |
+    | 4 | kmeans | 201,202,203 (0.6471, 0.6401, 0.6426) | 0.6433 | +0.0104 | 6.61 | ~0 | 0.0167 | survives — significantly WORSE |
+    | 5 | **dnsmos** | — (0.6244) | **0.6244** | **−0.0084** | **−3.57** | **0.00036** | 0.0250 | **survives — significantly BETTER** |
+    | 6 | dsir | 201,202,203 (0.6343, 0.6300, 0.6307) | 0.6317 | −0.0012 | −0.74 | 0.457 | 0.0500 | does NOT survive — genuine tie |
+    | — | anti (control, excluded from family) | — (0.6721) | 0.6721 | +0.0393 | 16.59 | ~0 | n/a | significantly WORSE, as designed |
 
-    **Headline**: no selector beats random at 25% on Track B; `dsir` ties,
-    every other selector is significantly WORSE, and `less_ctc`'s harm
-    (+0.0375) rivals the deliberately-adversarial `anti` baseline
-    (+0.0393) despite `less_ctc` passing its own internal consistency
-    check (0.998 cross-seed Spearman, §3.20-era result) — a selector can
-    be self-consistent in WHAT it ranks and still hurt training when
-    acted on. Per §7's gate, "beats random" is the promotion bar for the
-    5%/10% sweep — nothing currently clears it, so there is no candidate
-    to advance yet.
-    **PRELIMINARY — three things still needed before this is final**:
-    (a) `dnsmos`'s cell is still blocked on its own scoring job — the
-    Holm correction (§3.18(b)) needs the COMPLETE roster family, not this
-    partial one, though margins here are large enough that the verdicts
-    above are unlikely to flip; (b) `scripts/evaluate_track_b.py`'s
-    official post-hoc cross-check has not been run on ANY of these bundles
-    (including the item-28 floor/ceiling) — `verified` is `NO` across the
-    board; the numbers above are the live/primary signal per the §7
-    gate-signal policy, not yet the official one; (c) this is Track B
-    ONLY — RQ2's actual cross-track question (does this ranking pattern
-    hold on Track A) cannot be answered until Track A exists.
+    **Headline**: `dnsmos` is the first (and, at 25%, only) selector to
+    significantly BEAT random on Track B — survives Holm correction across
+    the complete 6-method family, not just a raw p<0.05 read. `dsir` is a
+    genuine tie (does not survive correction; correctly distinct from a
+    "just barely missed it" case — its p=0.457 is nowhere close). The
+    other four are all significantly WORSE, `less_ctc`'s harm (+0.0375)
+    comparable to the deliberately-adversarial `anti` control (+0.0393)
+    despite passing its own internal consistency check (0.998 cross-seed
+    Spearman, §3.20-era result) — a selector can be self-consistent in
+    WHAT it ranks and still hurt training when acted on. Per §7's gate,
+    `dnsmos` is now the one candidate that clears the "beats random" bar
+    for 5%/10% sweep promotion.
+    **All three PRELIMINARY caveats from the first draft of this item are
+    now resolved**: (a) the Holm correction above uses the COMPLETE
+    6-method family (`dnsmos`'s cell landed and is included) — no longer
+    partial; (b) `scripts/evaluate_track_b.py`'s official post-hoc
+    cross-check has now been run against ALL 18 completed bundles (13
+    selector cells + 5 random floors) via a batch driver — max
+    |live − official| discrepancy across all 18 was **0.000045** (mean
+    0.000027), i.e. the live numbers this table is built on are
+    independently confirmed, not just trusted from training logs; `dnsmos`
+    itself: live 0.6244 vs. official 0.62437. (c) is NOT yet resolved and
+    cannot be until Track A exists: this is still Track B ONLY — RQ2's
+    actual cross-track question (does this ranking pattern hold on Track
+    A) remains open. `scripts/evaluate_track_b.py` also had its own
+    NameError bug fixed the same day (§3.32) before any of this
+    cross-checking was possible.
 30. **Checkpoint/resume for score_dnsmos.py + error logging to W&B for all
     six scorers (2026-09-19)**. Job 2701385 hit `slurm/score_dnsmos.sbatch`'s
     `--time=06:00:00` wall at 82.1% done (23,856/29,064 utterances,
