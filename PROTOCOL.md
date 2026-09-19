@@ -426,10 +426,12 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     prefix count into `done/elapsed_s` would make both wildly wrong (e.g.
     dividing 23,856 resumed + 50 new rows by 5 session-elapsed seconds).
     (b) `slurm/score_dnsmos.sbatch`'s `--time` is now OMITTED rather than
-    bumped again — falls back to the u22/medium partition-or-QOS default,
-    which is NOT a guarantee of unlimited time (check `sacctmgr show qos
-    medium format=Name,MaxWall` if that matters); the checkpoint above is
-    what actually fixes the LOSS-of-work problem, not the wall itself.
+    bumped again — falls back to the u22/medium QOS's own `MaxWall`, which
+    (§5 item 8a) is 4 days, so this is not a meaningful cap in practice for
+    this job. The checkpoint above is still what actually fixes the
+    LOSS-of-work problem, not the wall itself — a node failure, preemption,
+    or `scancel` would bypass any `--time` value entirely and still need
+    the checkpoint to avoid losing completed work.
     (c) all six W&B-logging scripts' `finally:` blocks (`score_dnsmos.py`,
     `score_proxy.py`, `score_kmeans.py`, `score_dsir.py`, `score_less.py`,
     `sweep_dsir_l2.py`) now log the actual exception onto `run.summary`
@@ -627,6 +629,12 @@ laptop filesystem.
     (existing jobs) and keep N + existing ≤ 8** — split a larger batch into
     multiple `sbatch --array=...` calls (e.g. tasks 0-6 now, 7-11 once
     something else finishes) rather than one oversized submission.
+    **`MaxWall=4-00:00:00`** (4 days, checked the same way via
+    `sacctmgr show qos medium format=Name,MaxWall`) is the QOS's own wall-clock
+    ceiling — far above anything this project's jobs need, so omitting
+    `--time` (§3.30(b)) genuinely does NOT get capped by the QOS in
+    practice; a job would need to run for days before this limit, rather
+    than a self-imposed `--time`, became the binding constraint.
 9. **Adoption rule going forward**: every future sbatch/srun/command block emitted
    in this project MUST use exactly the §5.0 names and §5.8 scheduling constants;
    if a handoff contains a stale path/name (`~/pymax`, missing `-p u22`,
