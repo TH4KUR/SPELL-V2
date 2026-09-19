@@ -119,7 +119,7 @@ def main(argv=None) -> int:
             tokens = batch["tokens"][idx].to(device)
             lengths = batch["lengths"][idx].to(device)
             text_ids = batch["text_ids"][idx]
-            text_lengths_dev = text_lengths.to(device)
+            text_lengths_dev = batch["text_lengths"][idx].to(device)
             uids = [batch["utterance_ids"][i] for i in idx.tolist()]
 
             stream = tokens[:, input_stream, :]

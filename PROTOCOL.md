@@ -468,6 +468,24 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     (item 30(a)) already existed when this job ran, so a resubmission of
     the identical command resumed from `scores/dnsmos_scores.partial.parquet`
     instead of restarting at utterance 0.
+32. **`scripts/evaluate_track_b.py` had NEVER been run to completion before
+    2026-09-19 — zero test coverage, real NameError on the first real
+    invocation**: `main()`'s per-batch decode loop read
+    `text_lengths_dev = text_lengths.to(device)`, referencing a bare
+    `text_lengths` that was never assigned anywhere in the function (every
+    other field — `tokens`, `lengths`, `text_ids` — is sliced from
+    `batch[...][idx]` first; this one line was missing that slice
+    entirely). This is PROTOCOL's own "source of official final numbers"
+    script (§7 gate-signal policy) and it had exactly zero tests —
+    `tests/test_evaluate_track_b.py` did not exist. Fixed the line to
+    `batch["text_lengths"][idx].to(device)`, matching every sibling field,
+    and added real end-to-end test coverage: a genuine `LitConformerCTC`
+    checkpoint (manually-constructed, not mocked), real `TokenDataset`/
+    `DataLoader`, real greedy decode through the actual per-batch loop —
+    the same class of gap that let `score_proxy.py`'s `filter_records`
+    bug (item 25) and this one both ship unexercised: a script's first
+    REAL invocation, on real data, is not something a test suite can skip
+    and still call itself covering that script.
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 
