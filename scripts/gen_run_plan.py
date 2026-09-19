@@ -77,10 +77,10 @@ PLANS: dict[str, list[tuple]] = {
         (0, "track_b", "subsets/random_10pct_seed301.txt", 301,
          "configs/proxy_10pct.yaml", 1),
     ],
-    # P3 main grid, first wave (2026-09-18): the 12/13 roster selector cells
-    # whose manifests exist today (dnsmos's is still blocked on its Ada
-    # scoring job — added as a 13th row once that lands). Same frozen 25%
-    # config as the random floors (no per-subset tuning, PROTOCOL rule 2).
+    # P3 main grid, first wave (2026-09-18, completed 2026-09-19): all 13/13
+    # roster selector cells (dnsmos's manifest landed 2026-09-19, appended as
+    # task 12). Same frozen 25% config as the random floors (no per-subset
+    # tuning, PROTOCOL rule 2).
     # Stochastic selectors (dsir/kmeans/less_ctc) use their manifest's own
     # §3.20 identity seed; deterministic ones (el2n/lossrank/anti) have no
     # natural subset seed (characterization JSON: subset_seed=null) so they
@@ -114,6 +114,11 @@ PLANS: dict[str, list[tuple]] = {
          "configs/pilot_25pct_random_x2seeds.yaml", 0),
         (11, "track_b", "subsets/anti_25pct.txt", 0,
          "configs/pilot_25pct_random_x2seeds.yaml", 0),
+        # dnsmos's manifest landed 2026-09-19 (DNSMOS scoring job finished);
+        # appended as the 13th row per the comment above, same conventions
+        # (deterministic selector -> seed 0, keep_local_traj=0).
+        (12, "track_b", "subsets/dnsmos_25pct.txt", 0,
+         "configs/pilot_25pct_random_x2seeds.yaml", 0),
     ],
 }
 
@@ -126,8 +131,8 @@ EXTRA_BANNER: dict[str, tuple[str, ...]] = {
         "# bundle feeds scripts/score_proxy.py -> scores/proxy_scores.parquet.",
     ),
     "slurm/run_plan_p3_selectors.tsv": (
-        "# P3 main grid, first wave: 12/13 roster selector cells (dnsmos still",
-        "# blocked on its scoring job). Same frozen 25% config as the random",
+        "# P3 main grid, first wave: all 13/13 roster selector cells (dnsmos's",
+        "# manifest landed 2026-09-19). Same frozen 25% config as the random",
         "# floors -- no per-subset tuning. Independent of any other running job;",
         "# submit as its own array as soon as this plan file exists.",
     ),

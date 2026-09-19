@@ -5,8 +5,8 @@
 # Sequence discipline (PROTOCOL §7 gate): task 0 (ceiling) runs FIRST and ALONE;
 # 'val WER decreasing by epoch ~5' UNLOCKS tasks 1-5 (25% random floors, the
 # formal x5 random-floor cell per §3.8 — seeds 101-105, same config).
-# P3 main grid, first wave: 12/13 roster selector cells (dnsmos still
-# blocked on its scoring job). Same frozen 25% config as the random
+# P3 main grid, first wave: all 13/13 roster selector cells (dnsmos's
+# manifest landed 2026-09-19). Same frozen 25% config as the random
 # floors -- no per-subset tuning. Independent of any other running job;
 # submit as its own array as soon as this plan file exists.
 task	track	subset_manifest	seed	config_yaml	keep_local_traj
@@ -22,3 +22,4 @@ task	track	subset_manifest	seed	config_yaml	keep_local_traj
 9	track_b	subsets/el2n_25pct.txt	0	configs/pilot_25pct_random_x2seeds.yaml	0
 10	track_b	subsets/lossrank_25pct.txt	0	configs/pilot_25pct_random_x2seeds.yaml	0
 11	track_b	subsets/anti_25pct.txt	0	configs/pilot_25pct_random_x2seeds.yaml	0
+12	track_b	subsets/dnsmos_25pct.txt	0	configs/pilot_25pct_random_x2seeds.yaml	0

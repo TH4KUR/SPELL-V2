@@ -333,7 +333,15 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     phase-gate clearance beyond P1's already-passed G1/G2 anchor cells
     (§7's "advancing-selector" recording requirement applies to the
     LATER 5%/10% promotion gate, not this initial 25%-cell submission).
-    `dnsmos`'s cell will be appended as a 13th row once its manifest lands.
+    **Update (2026-09-19)**: `dnsmos`'s scoring job finished (checkpoint/
+    resume from §3.30/§3.31 carried it through the `DefaultTime` timeout
+    and a subsequent resubmit; 29,064 rows, `ovr_mos` range 1.04–3.61,
+    sane) and its manifest (`subsets/dnsmos_25pct.txt`) is generated —
+    **all 13/13 roster manifests now exist.** `dnsmos`'s cell is appended
+    as task 12 of `slurm/run_plan_p3_selectors.tsv`, same conventions
+    (deterministic selector → seed 0, `keep_local_traj=0`). Once this
+    13th cell's training finishes, the §3.29 significance table's caveat
+    (a) (Holm correction needs the complete roster family) is resolved.
 27. **`score_dnsmos.py`'s one-hop-at-a-time structure is NOT naive (checked,
     2026-09-18)**: the user was skeptical that scoring ~3h/29k-utterance was
     naive/suboptimal code. Checked against the actual DNS-Challenge
