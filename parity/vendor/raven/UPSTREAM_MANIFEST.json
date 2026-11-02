@@ -1,0 +1,356 @@
+{
+  "files": [
+    {
+      "upstream_git_blob_sha1": "cb714eb8197e92962517ef20a00368eb0cd6a30b",
+      "upstream_path": "LICENSE",
+      "upstream_sha256": "a853e9e1620d9c176a101e6f321e1cbd13055fd202c10f265e5b4437b3bec1b5",
+      "upstream_size": 1067,
+      "vendored_path": "LICENSE",
+      "vendored_sha256": "a853e9e1620d9c176a101e6f321e1cbd13055fd202c10f265e5b4437b3bec1b5",
+      "vendored_size": 1067
+    },
+    {
+      "upstream_git_blob_sha1": "05ce7c59f874afdd7067bd2abbf4cfec1e66c35a",
+      "upstream_path": "conf/model/audio_backbone/resnet_transformer_base.yaml",
+      "upstream_sha256": "7e1f209abb2ba7bf156f9bc6f437a99bc75e8a61a3fb140345d7bd37b604c25c",
+      "upstream_size": 707,
+      "vendored_path": "conf/model/audio_backbone/resnet_transformer_base.yaml",
+      "vendored_sha256": "7e1f209abb2ba7bf156f9bc6f437a99bc75e8a61a3fb140345d7bd37b604c25c",
+      "vendored_size": 707
+    },
+    {
+      "upstream_git_blob_sha1": "45181009c8196061384b095e8efc96855d1b3e9a",
+      "upstream_path": "data_paths/test_with_tags_counts_unigram1000.csv",
+      "upstream_sha256": "3be424dfc77b5fbabd7119cdeb7820dd719d5b62da76d511f7e6c316a1fe3212",
+      "upstream_size": 105494,
+      "vendored_path": "data_paths/test_with_tags_counts_unigram1000.csv",
+      "vendored_sha256": "3be424dfc77b5fbabd7119cdeb7820dd719d5b62da76d511f7e6c316a1fe3212",
+      "vendored_size": 105494
+    },
+    {
+      "upstream_git_blob_sha1": "4f72ba13a677a11c58b8ac5a10235ebe79a3824e",
+      "upstream_path": "espnet/asr/asr_utils.py",
+      "upstream_sha256": "380300e458ecd7ba05a47bcc5ad9d34d2e37ebf9f4cf82562820d4cbf31fafc8",
+      "upstream_size": 33540,
+      "vendored_path": "espnet/asr/asr_utils.py",
+      "vendored_sha256": "380300e458ecd7ba05a47bcc5ad9d34d2e37ebf9f4cf82562820d4cbf31fafc8",
+      "vendored_size": 33540
+    },
+    {
+      "upstream_git_blob_sha1": "67f403d1d604640f4a34ec5a026fdcd126337a81",
+      "upstream_path": "espnet/nets/batch_beam_search.py",
+      "upstream_sha256": "9a97a36238ca38df3050b1b9dbd6466c578e01af2e82e5fe35deffcbd61dc185",
+      "upstream_size": 12804,
+      "vendored_path": "espnet/nets/batch_beam_search.py",
+      "vendored_sha256": "9a97a36238ca38df3050b1b9dbd6466c578e01af2e82e5fe35deffcbd61dc185",
+      "vendored_size": 12804
+    },
+    {
+      "upstream_git_blob_sha1": "6e0338d8625c84d96f6040577a0f1c72fa7bcb78",
+      "upstream_path": "espnet/nets/beam_search.py",
+      "upstream_sha256": "5be747eb32dc052e9dbe42383073c2ea598e55ecb5995edfa4c86cbd707811ec",
+      "upstream_size": 18164,
+      "vendored_path": "espnet/nets/beam_search.py",
+      "vendored_sha256": "5be747eb32dc052e9dbe42383073c2ea598e55ecb5995edfa4c86cbd707811ec",
+      "vendored_size": 18164
+    },
+    {
+      "upstream_git_blob_sha1": "0c67ecd096de46ad00972cf3a8ba812852f38c97",
+      "upstream_path": "espnet/nets/ctc_prefix_score.py",
+      "upstream_sha256": "867b0179ec6230e9e69a32593c0bf96b12722cb184abe866a67e2042022d7fef",
+      "upstream_size": 13951,
+      "vendored_path": "espnet/nets/ctc_prefix_score.py",
+      "vendored_sha256": "d74abd58969800d8575db22c6a11f77b65296487a4501bae26b1e1e1a093acb4",
+      "vendored_size": 13900
+    },
+    {
+      "upstream_git_blob_sha1": "92f90796a3a230b3bfc47ebe8d9292fae37a1b9c",
+      "upstream_path": "espnet/nets/e2e_asr_common.py",
+      "upstream_sha256": "cfddfe2b403e9b73743633f1deaaec2d6e67c08887414c8e7745882d136a8a2d",
+      "upstream_size": 8572,
+      "vendored_path": "espnet/nets/e2e_asr_common.py",
+      "vendored_sha256": "b8846ee45dc26b1f393565ba408f9939fffa0255767ab506ca6a2a53c6ec0299",
+      "vendored_size": 8551
+    },
+    {
+      "upstream_git_blob_sha1": "d2de4e91c0e9a55a7d46013e5a338c18a91a54bc",
+      "upstream_path": "espnet/nets/pytorch_backend/backbones/conv1d_extractor.py",
+      "upstream_sha256": "9569c1b09947253711b9190551d9c0e01d1b1decf497414483150b0676c3663c",
+      "upstream_size": 1601,
+      "vendored_path": "espnet/nets/pytorch_backend/backbones/conv1d_extractor.py",
+      "vendored_sha256": "9569c1b09947253711b9190551d9c0e01d1b1decf497414483150b0676c3663c",
+      "vendored_size": 1601
+    },
+    {
+      "upstream_git_blob_sha1": "b77be449f8833cb6a490ba0fff891af0178074f6",
+      "upstream_path": "espnet/nets/pytorch_backend/backbones/conv3d_extractor.py",
+      "upstream_sha256": "3f4bab6a04b59aed37a22f9253a17350a2302535b62500642db9446dbbf876d4",
+      "upstream_size": 3167,
+      "vendored_path": "espnet/nets/pytorch_backend/backbones/conv3d_extractor.py",
+      "vendored_sha256": "3f4bab6a04b59aed37a22f9253a17350a2302535b62500642db9446dbbf876d4",
+      "vendored_size": 3167
+    },
+    {
+      "upstream_git_blob_sha1": "13f1a2bb73accde35ee3f016f6e9a34ab15ded25",
+      "upstream_path": "espnet/nets/pytorch_backend/backbones/modules/resnet.py",
+      "upstream_sha256": "bd2e709f79301f4f903c8d36c7843d899a032157aa05517256bdcb1bc41b88f0",
+      "upstream_size": 5227,
+      "vendored_path": "espnet/nets/pytorch_backend/backbones/modules/resnet.py",
+      "vendored_sha256": "bd2e709f79301f4f903c8d36c7843d899a032157aa05517256bdcb1bc41b88f0",
+      "vendored_size": 5227
+    },
+    {
+      "upstream_git_blob_sha1": "91b4d0c20dea8d17d07170cffbaf13e9419ca11e",
+      "upstream_path": "espnet/nets/pytorch_backend/backbones/modules/resnet1d.py",
+      "upstream_sha256": "87987c42b31740679e3511cbe105e9fae45b95557be3f1a3dc8f9208f47692ec",
+      "upstream_size": 6399,
+      "vendored_path": "espnet/nets/pytorch_backend/backbones/modules/resnet1d.py",
+      "vendored_sha256": "87987c42b31740679e3511cbe105e9fae45b95557be3f1a3dc8f9208f47692ec",
+      "vendored_size": 6399
+    },
+    {
+      "upstream_git_blob_sha1": "f54ec6a73bbe8c04f965ed0671e9204a431d3511",
+      "upstream_path": "espnet/nets/pytorch_backend/ctc.py",
+      "upstream_sha256": "4929e40ec38c434080e13fbb8a1d2c9d69c43ce981d5b65125a1f12e12394f40",
+      "upstream_size": 10178,
+      "vendored_path": "espnet/nets/pytorch_backend/ctc.py",
+      "vendored_sha256": "2d4ef4d9346c4302aff7afa94e3ec6b5d07b6fb2530c47da91c74c5450fbb663",
+      "vendored_size": 10138
+    },
+    {
+      "upstream_git_blob_sha1": "d38ded915ac842e7e377ee68007cb45571b6512a",
+      "upstream_path": "espnet/nets/pytorch_backend/e2e_asr_transformer.py",
+      "upstream_sha256": "f8ed66cfc0f01c5b63333b208e79114bc83e48316e70b8c618b6641e95a96270",
+      "upstream_size": 5068,
+      "vendored_path": "espnet/nets/pytorch_backend/e2e_asr_transformer.py",
+      "vendored_sha256": "f8ed66cfc0f01c5b63333b208e79114bc83e48316e70b8c618b6641e95a96270",
+      "vendored_size": 5068
+    },
+    {
+      "upstream_git_blob_sha1": "78fc32f1a8cbc96b06a58633333468708892d4ab",
+      "upstream_path": "espnet/nets/pytorch_backend/nets_utils.py",
+      "upstream_sha256": "53a66c3ed95de0fdd59677df1682dcf8bf3f109a62f6d2cbf284d7eb948f4efb",
+      "upstream_size": 16601,
+      "vendored_path": "espnet/nets/pytorch_backend/nets_utils.py",
+      "vendored_sha256": "8fa0a29ce7bb6e244a825be58702e2958a3710097d8bf4b37e2751dfe9e498bf",
+      "vendored_size": 16589
+    },
+    {
+      "upstream_git_blob_sha1": "b7f177368e62a5578b8706300e101f831a3972ac",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/__init__.py",
+      "upstream_sha256": "aba1b9ff25a1b69d8a6905e7ed877205b5b8af6f3d1d9e82bb28b8aaed9aaeee",
+      "upstream_size": 30,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/__init__.py",
+      "vendored_sha256": "aba1b9ff25a1b69d8a6905e7ed877205b5b8af6f3d1d9e82bb28b8aaed9aaeee",
+      "vendored_size": 30
+    },
+    {
+      "upstream_git_blob_sha1": "c550c5e58bc4525d7890b63b2b723e9495329016",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/add_sos_eos.py",
+      "upstream_sha256": "e73c11b60af9a67467bde1e53b031d43ccd00cd55e5f85813c4e6d757114c7ce",
+      "upstream_size": 958,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/add_sos_eos.py",
+      "vendored_sha256": "e73c11b60af9a67467bde1e53b031d43ccd00cd55e5f85813c4e6d757114c7ce",
+      "vendored_size": 958
+    },
+    {
+      "upstream_git_blob_sha1": "888ce2bff2aa669af5f1f1ac9fc314d41a79d4e0",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/attention.py",
+      "upstream_sha256": "bfea4fa020b93bcf096ccd960635144ee5eb7f9683a8537ed0f637ed556be645",
+      "upstream_size": 11939,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/attention.py",
+      "vendored_sha256": "bfea4fa020b93bcf096ccd960635144ee5eb7f9683a8537ed0f637ed556be645",
+      "vendored_size": 11939
+    },
+    {
+      "upstream_git_blob_sha1": "9fb752dcf7db107177b46fbb62b744ef70340d40",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/convolution.py",
+      "upstream_sha256": "ce9e9f1dc6bf22ff51ac253a1554120181f99f63fea212030ad837f975ebbf7b",
+      "upstream_size": 2265,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/convolution.py",
+      "vendored_sha256": "ce9e9f1dc6bf22ff51ac253a1554120181f99f63fea212030ad837f975ebbf7b",
+      "vendored_size": 2265
+    },
+    {
+      "upstream_git_blob_sha1": "8f085303bfa2acb1a6ff46ba96cb3526b8394ca2",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/decoder.py",
+      "upstream_sha256": "4899bb6e9c0b77f4fe1dcff353433b9428b549eb4ca44ee5fd11aa7ceeca4c4e",
+      "upstream_size": 9741,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/decoder.py",
+      "vendored_sha256": "4899bb6e9c0b77f4fe1dcff353433b9428b549eb4ca44ee5fd11aa7ceeca4c4e",
+      "vendored_size": 9741
+    },
+    {
+      "upstream_git_blob_sha1": "50da1908d84f81bfeec5819da0457dfbe311b39f",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/decoder_layer.py",
+      "upstream_sha256": "11c4ca35005150e1ff776ea750a3f30874f366279f728470cbdd80eb539c9f1a",
+      "upstream_size": 4421,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/decoder_layer.py",
+      "vendored_sha256": "11c4ca35005150e1ff776ea750a3f30874f366279f728470cbdd80eb539c9f1a",
+      "vendored_size": 4421
+    },
+    {
+      "upstream_git_blob_sha1": "6e0917512ef0419c9d8ecd460a8d17083d7bfdf6",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/embedding.py",
+      "upstream_sha256": "a5a1fb01222a7b8e6117daa333e1df1847c35cdb56d07a5a70fc1fb044cb327a",
+      "upstream_size": 8782,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/embedding.py",
+      "vendored_sha256": "a5a1fb01222a7b8e6117daa333e1df1847c35cdb56d07a5a70fc1fb044cb327a",
+      "vendored_size": 8782
+    },
+    {
+      "upstream_git_blob_sha1": "346437c7ec628ba42ff12448a345e354a2ecb8a4",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/encoder.py",
+      "upstream_sha256": "878dd2a4441755a7d68a6e9e5532a9d35b253816f639fe5d41a25af0a9072d0d",
+      "upstream_size": 12422,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/encoder.py",
+      "vendored_sha256": "878dd2a4441755a7d68a6e9e5532a9d35b253816f639fe5d41a25af0a9072d0d",
+      "vendored_size": 12422
+    },
+    {
+      "upstream_git_blob_sha1": "b5c8d057df5365ad8f2e1e6eb117d8deda7957a6",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/encoder_layer.py",
+      "upstream_sha256": "854efa9167791365ab6b20fe2eebade029c5fd82f1e6d4473d8fc3bd1db15ae4",
+      "upstream_size": 9330,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/encoder_layer.py",
+      "vendored_sha256": "854efa9167791365ab6b20fe2eebade029c5fd82f1e6d4473d8fc3bd1db15ae4",
+      "vendored_size": 9330
+    },
+    {
+      "upstream_git_blob_sha1": "0d8b30338a778da9ba27870d51db24afd10d9b24",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/label_smoothing_loss.py",
+      "upstream_sha256": "70f6a14a1f8749c1dfa39a96469d9633246856572d2140cddd0378857598e265",
+      "upstream_size": 2164,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/label_smoothing_loss.py",
+      "vendored_sha256": "70f6a14a1f8749c1dfa39a96469d9633246856572d2140cddd0378857598e265",
+      "vendored_size": 2164
+    },
+    {
+      "upstream_git_blob_sha1": "127f7a200e22674916ae976e045c6eacee81bc1c",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/mask.py",
+      "upstream_sha256": "98247deea6952704379537e22ece50c956b40257a124359a575b54c7073e763d",
+      "upstream_size": 1660,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/mask.py",
+      "vendored_sha256": "2c7bad3e47377bbda6d6e79961be51c23112ddf0a0b3db5b52fdc7c9b2fdc2b6",
+      "vendored_size": 1671
+    },
+    {
+      "upstream_git_blob_sha1": "fdb7fe70810eda54c727367efc986ce02ce581cc",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/multi_layer_conv.py",
+      "upstream_sha256": "00103ea8b18d759dabcc80b846559bd49fe9348308ad46ff41aa34ed0bfbe3fd",
+      "upstream_size": 3148,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/multi_layer_conv.py",
+      "vendored_sha256": "00103ea8b18d759dabcc80b846559bd49fe9348308ad46ff41aa34ed0bfbe3fd",
+      "vendored_size": 3148
+    },
+    {
+      "upstream_git_blob_sha1": "1b5c3be5566ba172a61c1f962d0d63ae12dcd225",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/norm.py",
+      "upstream_sha256": "888715d18ee4866d8b01c45f218f389e6a2d513374b312a3a2250f5717b4ff30",
+      "upstream_size": 1220,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/norm.py",
+      "vendored_sha256": "888715d18ee4866d8b01c45f218f389e6a2d513374b312a3a2250f5717b4ff30",
+      "vendored_size": 1220
+    },
+    {
+      "upstream_git_blob_sha1": "219679209c2c4ab8ac71bbaf174bb21db65499dc",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/positionwise_feed_forward.py",
+      "upstream_sha256": "c4db61e228ba3c55158d20ce53a1d5ec13e87a34148d38164230d4ac93d506b2",
+      "upstream_size": 899,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/positionwise_feed_forward.py",
+      "vendored_sha256": "c4db61e228ba3c55158d20ce53a1d5ec13e87a34148d38164230d4ac93d506b2",
+      "vendored_size": 899
+    },
+    {
+      "upstream_git_blob_sha1": "5298fd3aeaf378e7a30999f66529e2d710b8c78d",
+      "upstream_path": "espnet/nets/pytorch_backend/transformer/repeat.py",
+      "upstream_sha256": "88885f45acfb4675fe35db9e1f7ced655281e0b2d2958583f4b7b638e21e7577",
+      "upstream_size": 675,
+      "vendored_path": "espnet/nets/pytorch_backend/transformer/repeat.py",
+      "vendored_sha256": "88885f45acfb4675fe35db9e1f7ced655281e0b2d2958583f4b7b638e21e7577",
+      "vendored_size": 675
+    },
+    {
+      "upstream_git_blob_sha1": "946ec6be317603d87cfd938cc096d11b7bcbfbdf",
+      "upstream_path": "espnet/nets/scorer_interface.py",
+      "upstream_sha256": "6502f5901d0cd7b4fae768826c87c3374d3f843de9943ef4a3db3f5f5ae302a4",
+      "upstream_size": 5938,
+      "vendored_path": "espnet/nets/scorer_interface.py",
+      "vendored_sha256": "6502f5901d0cd7b4fae768826c87c3374d3f843de9943ef4a3db3f5f5ae302a4",
+      "vendored_size": 5938
+    },
+    {
+      "upstream_git_blob_sha1": "b7f177368e62a5578b8706300e101f831a3972ac",
+      "upstream_path": "espnet/nets/scorers/__init__.py",
+      "upstream_sha256": "aba1b9ff25a1b69d8a6905e7ed877205b5b8af6f3d1d9e82bb28b8aaed9aaeee",
+      "upstream_size": 30,
+      "vendored_path": "espnet/nets/scorers/__init__.py",
+      "vendored_sha256": "aba1b9ff25a1b69d8a6905e7ed877205b5b8af6f3d1d9e82bb28b8aaed9aaeee",
+      "vendored_size": 30
+    },
+    {
+      "upstream_git_blob_sha1": "1d12ce6e2a2839e05b83c1b3c4484ef8ae1df855",
+      "upstream_path": "espnet/nets/scorers/ctc.py",
+      "upstream_sha256": "110110ee014c39d6d90f4e227d60e77d394ecdfa3a2afe38f7a244ebcb2ecb5e",
+      "upstream_size": 4993,
+      "vendored_path": "espnet/nets/scorers/ctc.py",
+      "vendored_sha256": "110110ee014c39d6d90f4e227d60e77d394ecdfa3a2afe38f7a244ebcb2ecb5e",
+      "vendored_size": 4993
+    },
+    {
+      "upstream_git_blob_sha1": "fe32a616211591308c8e7ade144e856230d211d4",
+      "upstream_path": "espnet/nets/scorers/length_bonus.py",
+      "upstream_sha256": "3a022a50d0143b0f9bd631d05e0a256252f03afe4e5649ffe674d91c65bc3b08",
+      "upstream_size": 1776,
+      "vendored_path": "espnet/nets/scorers/length_bonus.py",
+      "vendored_sha256": "3a022a50d0143b0f9bd631d05e0a256252f03afe4e5649ffe674d91c65bc3b08",
+      "vendored_size": 1776
+    },
+    {
+      "upstream_git_blob_sha1": "4943a5a4931f6da47be88e6b65bba953d51fa876",
+      "upstream_path": "labels/unigram1000_units.txt",
+      "upstream_sha256": "ead1469024d34194e1c7abfe2ca0457f06d5afee78267af2a0cbdea946f359f4",
+      "upstream_size": 12163,
+      "vendored_path": "labels/unigram1000_units.txt",
+      "vendored_sha256": "ead1469024d34194e1c7abfe2ca0457f06d5afee78267af2a0cbdea946f359f4",
+      "vendored_size": 12163
+    },
+    {
+      "upstream_git_blob_sha1": "5065b7d04b5eef104fd1ca8ca49d8a2f476d2209",
+      "upstream_path": "data/transforms.py",
+      "upstream_sha256": "4d2bbc5a2c611d3a297393eafc0cc5ad76d74b7ddff5b4442085a8babe1cbe21",
+      "upstream_size": 14808,
+      "vendored_path": "raven_data_transforms.py",
+      "vendored_sha256": "f5b9a0413f017d646ea3a832a4c2b285d61e4aeca1d7c2a6931a6e46a3da35e5",
+      "vendored_size": 1098
+    },
+    {
+      "upstream_git_blob_sha1": "5dc4213939a69275ca1ccf99f15b72aa431e2f97",
+      "upstream_path": "metrics.py",
+      "upstream_sha256": "730f88560cd0ecf382ddf476feb6cce69d62078a8026093324e306198cf3d391",
+      "upstream_size": 1681,
+      "vendored_path": "raven_metrics.py",
+      "vendored_sha256": "254b37f158670a6b97d9629d09457c7be15313fd0af5075cba2a0013033e593b",
+      "vendored_size": 865
+    },
+    {
+      "upstream_git_blob_sha1": "1acc37c7aa401121b2b3b8763f1f731e113447ee",
+      "upstream_path": "utils.py",
+      "upstream_sha256": "1c74937914563c31a34bcddc9c3d02472ccce3de842f09550cc3a7135acfde1a",
+      "upstream_size": 3005,
+      "vendored_path": "raven_utils.py",
+      "vendored_sha256": "1c74937914563c31a34bcddc9c3d02472ccce3de842f09550cc3a7135acfde1a",
+      "vendored_size": 3005
+    }
+  ],
+  "non_upstream_files": [
+    "PATCHES.md",
+    "UPSTREAM_MANIFEST.json",
+    "vendor.patch"
+  ],
+  "upstream": {
+    "commit": "9fd9a3743c41ba93532258b340d123c20fe25432",
+    "license": "MIT",
+    "repo": "https://github.com/ahaliassos/raven"
+  }
+}

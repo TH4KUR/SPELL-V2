@@ -1,0 +1,60 @@
+# Pre-registered training recipes of the RAVEn-parity track (PROTOCOL §3.34).
+#
+# These two recipes are fixed BEFORE any run. They are chosen between on validation
+# WER only; the test split is scored once, for the chosen recipe, after the Phase-1
+# gate has passed. parity.recipes pins this file by sha256 (RECIPES_SHA256): editing any
+# byte makes every training entry point refuse to start until the constant is updated
+# on purpose (and the change is logged in parity/CLAIMS.md and PROTOCOL §3.34).
+# A third recipe may only be added after BOTH have been run and missed the parity band
+# (date and reason recorded, §3.34); nothing here is tuned per run.
+#
+# Every value line ends with one provenance tag:
+#   paper-stated        read from the RAVEn paper (arXiv 2212.06246). NOTE: Table 7 is the
+#                       FINE-TUNING table; the paper states no separate from-scratch recipe.
+#   usr-stated          read from USR (arXiv 2411.02256, Table 8 / App. C.5), same first author,
+#                       supervised training of a Base model from scratch.
+#   checkpoint-derived  read off the released RAVEn checkpoint.
+#   inferred            derived from a primary source by an argument, not stated there.
+#   assumed             a choice nothing primary supports; the reviewer should challenge it.
+
+common:
+  seed: 42                         # usr-stated (USR Table 8: seed 42); RAVEn states none
+  betas: [0.9, 0.98]               # paper-stated (RAVEn Table 7) and usr-stated
+  ctc_weight: 0.1                  # paper-stated (RAVEn Sec. 4.1 and App. A.4: loss = alpha * CTC + (1 - alpha) * attention, alpha = 0.1; upstream mtlalpha)
+  label_smoothing: 0.1             # inferred (the paper does not mention label smoothing; upstream's model config sets lsm_weight 0.1 and E2E.forward applies it)
+  time_mask_window_s: 0.4          # paper-stated (RAVEn App. A.4: zero-mask duration U(0, 0.4 s))
+  time_mask_stride_s: 1.0          # paper-stated (RAVEn App. A.4: one mask per second of audio)
+  waveform_normalisation: none     # paper-stated (RAVEn App. A.2: raw audio, no pre-processing nor normalisation)
+  precision: fp32                  # assumed (the paper mentions no mixed precision; upstream code and Auto-AVSR run fp32)
+  effective_batch_seconds: 198     # assumed (USR Table 8: 155 video frames per GPU x 32 A100 at 25 frames/s = 198 s per update; whether RAVEn used it is unknown)
+  micro_batch_seconds: 60          # assumed (hardware choice: padded seconds per forward/backward, sized from measured peak memory for an 11 GB RTX 2080 Ti; RAVEn's per-GPU batch is unstated, about 6.2 s if USR's 155 frames per GPU holds, so BatchNorm statistics may differ)
+  model_selection: final_epoch     # assumed (RAVEn states none; Table 1 does not mention checkpoint averaging)
+  average_last_k: 10               # inferred (Ma et al. 2022 average the last 10 checkpoints; used only when model_selection is average_last_k)
+  beam_size: 40                    # paper-stated (RAVEn App. A.4)
+  decode_ctc_weight: 0.1           # paper-stated (RAVEn App. A.4: lambda = 0.1 at decoding)
+
+recipes:
+  R-A:
+    # RAVEn Table 7 (low-resource fine-tuning column) taken literally for a from-scratch run.
+    description: RAVEn Table 7 literal (encoder 2e-3, decoder and CTC head 6e-3, layer-wise LR decay 0.5)
+    epochs: 50                     # paper-stated (Table 7)
+    warmup_epochs: 20              # paper-stated (Table 7)
+    lr_encoder: 2.0e-3             # paper-stated (Table 7, encoder LR)
+    lr_decoder: 6.0e-3             # paper-stated (Table 7, decoder LR); also used for the CTC head (inferred: upstream get_param_groups default ctc_equals_other)
+    weight_decay: 0.1              # paper-stated (Table 7)
+    layer_decay: 0.5               # paper-stated for fine-tuning; assumed to apply to from-scratch training too
+    min_lr: 1.0e-5                 # paper-stated (Table 7); used as the per-group LR floor of get_param_groups AND as the end of the cosine schedule (assumed reading)
+    grad_clip: 5.0                 # paper-stated (Table 7)
+    drop_path: 0.2                 # paper-stated (Table 7)
+  R-B:
+    # USR Table 8 / App. C.5 (supervised training of a Base model), no layer-wise decay.
+    description: USR Table 8 (75 epochs, one LR 3e-3 for every parameter, no layer-wise LR decay)
+    epochs: 75                     # usr-stated (Table 8)
+    warmup_epochs: 20              # usr-stated (Table 8)
+    lr_encoder: 3.0e-3             # usr-stated (Table 8, LRS3 learning rate)
+    lr_decoder: 3.0e-3             # usr-stated (one learning rate for the whole model)
+    weight_decay: 0.04             # usr-stated (Table 8)
+    layer_decay: null              # assumed (USR Table 8 lists no layer-wise decay)
+    min_lr: 1.0e-5                 # assumed (USR decays the cosine to a minimum it does not state; RAVEn's Table 7 value is reused)
+    grad_clip: 3.0                 # usr-stated (Table 8)
+    drop_path: 0.1                 # usr-stated (Table 8, Base)

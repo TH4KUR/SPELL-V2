@@ -496,6 +496,105 @@ deviation in the affected `run_manifest.json` and disclosed in the paper.
     bug (item 25) and this one both ship unexercised: a script's first
     REAL invocation, on real data, is not something a test suite can skip
     and still call itself covering that script.
+33. **RAVEn-parity track — a documented exception to §2.1, §3.4 and §3.5
+    (2026-10-18)**: the advisor's reading of our ASR WER (49.6 %) as "on the
+    higher side" of published numbers for the same data requires reproducing
+    RAVEn's published FROM-SCRATCH audio-only baseline (arXiv 2212.06246 Table 1,
+    Base: 18.5 % WER, official LRS3 test, 30 h trainval, no LM, beam 40) with the
+    SAME architecture and data BEFORE any data-selection experiment runs on it.
+    Everything for this lives in `parity/`, `scripts/parity_*.py`,
+    `slurm/parity_*.sbatch`, `configs/parity/` and `tests/test_parity_*.py`; no
+    Track A/B file is touched (`text_norm.py`, `subsets/splits/*`,
+    `configs/protocol.yaml`, `slurm/template.sbatch`, `scripts/gen_run_plan.py`,
+    the run-plan TSVs, the Track A/B model and trainer code and
+    `requirements.lock` stay as they are) and Track B's own numbers and
+    evaluators are unchanged. The exception, item by item:
+    (a) *Text*: references are `text_raw` upper-cased with whitespace collapsed,
+    digits and apostrophes kept — NOT `text_norm.normalize_text` (which
+    lower-cases and spells digits out). Reason: RAVEn's labels are the raw
+    upper-case LRS3 text (24 of the 1,321 official test references contain digits).
+    (b) *Metric*: CORPUS WER (sum of word-level edits / sum of reference words,
+    RAVEn's `metrics.WER`) is the parity headline and is always reported next to
+    the macro mean of per-utterance WERs (Track B's definition, `ctc.py`); the two
+    are different statistics and are never to be compared across tracks without
+    saying which is which (the jiwer toy case ["10-word utterance", "x"] with one
+    error on the short one gives corpus 1/11 and macro 0.5).
+    (c) *Splits* (`parity/splits/`, built by `scripts/parity_build_splits.py`):
+    train 30,782 utts / 29.25 h = official trainval minus the 1,200 clips of
+    AV-HuBERT's `lrs3-valid.id` (facebookresearch/av_hubert @ `b4fa4af9…`, sha256
+    `4e24da96…`, custom Meta licence: verified and recorded, never copied into the
+    repo); val = those 1,200 clips / 1.15 h (913 videos, 889 of them also in train —
+    NOT video-disjoint, which is how RAVEn did it); test = the official 1,321
+    clips / 0.85 h, whose references must equal RAVEn's own test labels
+    (`data_paths/test_with_tags_counts_unigram1000.csv`) as a multiset. Track B's
+    split files are untouched.
+    (d) *Test unlock, scoped to this track*: `scripts/parity_eval.py --split test`
+    is refused (exit 3) unless `SPELL_FINAL_EVAL=1`, the same variable as §3.5, and
+    is to be run only after the Phase-1 val run has looked sane. This unlocks
+    nothing for Track A/B: their evaluators and the §3.5 quarantine are unchanged.
+    (e) *Phase-1 pass criterion* (evaluation-harness parity, no training): the
+    released RAVEn Base ASR checkpoint (README row "Base / LRS3 / 4.7", sha256
+    `78212d2b…`; loads into the vendored model with `strict=True`) decoded with
+    upstream's recipe (beam 40, CTC weight 0.1, no LM) over the 1,321 test clips
+    must give corpus WER 4.7 ± 0.2 (i.e. 4.5–4.9). Failing it is a HARD STOP:
+    nothing downstream is trusted until it passes, and decode settings are not
+    tuned to make it pass.
+    (f) *Provenance*: the upstream code is vendored under `parity/vendor/raven/`
+    from `ahaliassos/raven` @ `9fd9a374…` (MIT); every vendored file must equal
+    upstream byte-for-byte except the enumerated patches in `PATCHES.md`, which a
+    pytest proves offline (manifest of upstream sha256 + unified patch).
+    (g) *Logging*: the parity scripts are §3.23–§3.25 runs (`job_type` `parity_*`,
+    `parity_*/` series, flat run names — never `train/*`, `val/*` or a §3.17(d)
+    formal run id).
+    (h) *Deviation log*: any departure from upstream's architecture, decoding
+    procedure, data or text handling, and any additional vendor patch, must be
+    entered with date and reason in `parity/CLAIMS.md` (claims ledger) and
+    `parity/REVIEW.md` BEFORE a number that depends on it is quoted; no parity
+    number goes to the advisor without a ledger row naming its evidence.
+34. **RAVEn-parity track, Phase 2 — pre-registered from-scratch recipes (2026-10-19)**:
+    RAVEn publishes no training code and no from-scratch recipe (its Table 7 is the
+    FINE-TUNING table), so the from-scratch baseline is trained by `scripts/parity_train.py`
+    (`parity/trainer.py`, plain PyTorch, fp32) under exactly one of two recipes fixed
+    BEFORE any run in `configs/parity/recipes.yaml`: **R-A** = RAVEn Table 7 taken literally
+    (50 epochs, 20 warm-up, encoder LR 2e-3, decoder and CTC-head LR 6e-3, weight decay 0.1,
+    layer-wise LR decay 0.5, minimum LR 1e-5, gradient clip 5.0, drop-path 0.2) and **R-B** =
+    USR (arXiv 2411.02256) Table 8 (75 epochs, 20 warm-up, one LR 3e-3, weight decay 0.04,
+    no layer-wise decay, gradient clip 3.0, drop-path 0.1); common: AdamW (0.9, 0.98), seed 42,
+    CTC weight 0.1, label smoothing 0.1, zero time-mask of up to 0.4 s per second, no waveform
+    normalisation, effective batch 198 s per update. Every value carries a provenance tag
+    (paper-stated / usr-stated / checkpoint-derived / inferred / assumed) in the file and in
+    `parity/REVIEW_STAGE2.md`.
+    (a) *Pin*: the file is pinned by sha256 (`parity.recipes.RECIPES_SHA256` =
+    `4f0ea8572664c7fa9066831c450036ebd2d361e7173c982ed123de08c9a8dcdd`); every training entry
+    point refuses to start on any other bytes. Changing a value means editing the file AND the
+    constant, on purpose, with a dated entry in `parity/CLAIMS.md`.
+    (b) *Selection*: the recipe is chosen on VALIDATION WER only (the parity val split, 1,200
+    clips, joint CTC/attention beam search at the end of each run); the trainer never reads the
+    test split (refused in code) and has no unlock.
+    (c) *Test*: scored once, for the chosen recipe only, by `scripts/parity_eval.py --split test`
+    under `SPELL_FINAL_EVAL=1`, after the Phase-1 gate of §3.33(e) has passed.
+    (d) *Parity band* (PROPOSAL, to be confirmed by the professor before the test run): test
+    corpus WER within 2.0 absolute of RAVEn's published 18.5 % (arXiv 2212.06246 Table 1,
+    Base, no LM), i.e. 16.5-20.5 %.
+    (e) *Deviation log*: a departure from the recipes (including `--micro-batch-seconds`, which
+    `summary.json` records as an override), the tokenizer, the data or the model must be entered
+    with date and reason in `parity/CLAIMS.md` and `parity/REVIEW_STAGE2.md` BEFORE a number that
+    depends on it is quoted (extends §3.33(h)).
+    (f) *Closed set*: a third recipe (checkpoint averaging of the last 10 epochs, layer-wise decay
+    off, a different batch) may be added ONLY after both R-A and R-B have been run to completion
+    and missed the band, with the date and the reason recorded here and the pin updated.
+    (g) *Assumptions that are not paper-stated*: the effective batch of 198 s per update is USR's
+    (155 video frames per GPU x 32 A100 at 25 frames/s), not RAVEn's; it is realised as micro-batches
+    of at most 60 padded seconds with gradient accumulation (each utterance weighs equally), so
+    BatchNorm statistics are per 60 s micro-batch where RAVEn's would be per ~6 s GPU batch if USR's
+    155 frames per GPU holds; the
+    SentencePiece model is our own unigram-1000 trained on the parity train text only (RAVEn's is not
+    released; `parity/spm_tokens.py` reports its overlap with RAVEn's units list); the cosine schedule
+    decays to the recipe's minimum LR; weight decay applies to every parameter. The full list, ranked
+    by expected impact on parity, is `parity/REVIEW_STAGE2.md` section 5.
+    (h) *Logging*: the trainer is a §3.23-§3.25 run (`job_type` `parity_train`, series
+    `parity_train/*`, flat run name `parity-train-<recipe>-<job id>`, opened before any work, live
+    per-update and per-epoch series with timing and ETA, `run.finish(exit_code)` from a `finally`).
 
 ## 4. Known caveats (accepted, uniform ⇒ ranking-valid)
 

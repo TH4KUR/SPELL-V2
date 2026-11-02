@@ -1,0 +1,58 @@
+# RAVEn Base audio-only ASR architecture (PROTOCOL §3.33). Every key the vendored
+# E2E constructor reads is listed explicitly; parity.model.build_model refuses a
+# missing or unknown key, so nothing here can fall back to a hidden default.
+#
+# Provenance of the values:
+#   - keys not marked below: upstream conf/model/audio_backbone/
+#     resnet_transformer_base.yaml @ 9fd9a37 (vendored verbatim; a test pins the
+#     equality). Where a key changes tensor shapes (elayers, widths, layerscale,
+#     ff_bn_pre, rel_mha, macaron_style, use_cnn_module) the released checkpoint agrees
+#     (state_dict fingerprint test). Keys that change no tensor shape (relu_type,
+#     rel_pos_type, zero_triu, a_upsample_ratio) cannot be checked against the weights.
+#   - ddim / dunits / dlayers: pinned by the released checkpoint
+#     (decoder.embed.0.weight 1049x256, decoder.proj_decoder.weight 256x512,
+#     decoder.decoders.*.feed_forward.w_1.weight 2048x256, 6 decoder blocks).
+#     Upstream's yaml has ddim/dunits as interpolations of adim/eunits (512 / 2048)
+#     and only the *_trainval test scripts override them -- on `model.visual_backbone`,
+#     which an audio model never reads. The paper's Table 7 (low-resource column)
+#     agrees on hidden size 256 and 6 Base blocks but says decoder MLP 1024; the
+#     checkpoint says 2048 and is authoritative.
+#   - dheads: 4 -- paper Table 7 (low-resource: 4 decoder attention heads) and the
+#     same upstream test scripts. The head count leaves every tensor shape unchanged,
+#     so the checkpoint itself cannot confirm it; the Phase-1 WER gate is the end-to-end
+#     check (see parity/REVIEW.md).
+#   - ctc_type is ignored on torch >= 1.7 (CTC.__init__ forces "builtin"); kept as
+#     upstream has it.
+idim: 512
+adim: 512
+aheads: 8
+eunits: 2048
+elayers: 12
+transformer_frontend: conv1d
+transformer_input_layer: vanilla_linear
+dropout_rate: 0.1
+transformer_attn_dropout_rate: 0.1
+transformer_encoder_attn_layer_type: rel_mha
+macaron_style: false
+use_cnn_module: false
+cnn_module_kernel: 31
+zero_triu: false
+a_upsample_ratio: 1
+relu_type: swish
+ddim: 256
+dheads: 4
+dunits: 2048
+dlayers: 6
+lsm_weight: 0.1
+transformer_length_normalized_loss: false
+rel_pos_type: latest
+layerscale: true
+init_values: 0.1
+ff_bn_pre: true
+post_norm: false
+gamma_zero: false
+gamma_init: 0.1
+mask_init_type: null
+ctc_type: warpctc
+drop_path: 0.0
+mtlalpha: 0.1
