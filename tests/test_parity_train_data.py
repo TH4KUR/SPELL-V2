@@ -100,6 +100,26 @@ def test_time_mask_rejects_non_1d_input():
         _mask(torch.ones(2, 100), 0, 0)
 
 
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
+def test_time_mask_consumes_the_start_draw_even_when_the_mask_is_skipped(seed):
+    """Upstream draws ``t_start`` BEFORE skipping on ``t == 0``, so a skipped mask still
+    advances the python RNG. At the production window (6400) ``t == 0`` has probability
+    1/6400 per mask, so the equivalence test above passes on seed luck alone; a small
+    window makes it common and pins the draw ORDER, not just the output."""
+    window, stride, n = 4, 1000, 200_000
+    n_mask = int((n + stride - 0.1) // stride)
+    draws = torch.randint(0, window, size=(n_mask, 2),
+                          generator=torch.Generator().manual_seed(seed))
+    assert (draws[:, 0] == 0).any(), "vacuous: this seed never draws t == 0"
+
+    wave = torch.randn(n) + 5.0
+    torch.manual_seed(seed)
+    random.seed(seed + 100)
+    upstream_out = AdaptiveLengthTimeMask(window, stride, replace_with_zero=True)(wave.unsqueeze(0))[0]
+    ours = _mask(wave, seed, seed + 100, window=window, stride=stride)
+    assert torch.equal(ours, upstream_out)
+
+
 # ------------------------------------------------------------------- sampler ---------
 
 def _frames(n=600, seed=0):
@@ -150,6 +170,24 @@ def test_update_count_is_the_same_every_epoch_and_matches_the_effective_batch():
     assert abs(padded.mean() - 198.0) < 0.1 * 198.0
     assert padded.min() > 198.0 - 61 and padded.max() < 198.0 + 61      # within one micro-batch
     assert plans[0].n_utterances == len(frames)
+
+
+def test_update_boundaries_never_leave_an_empty_update_when_micro_equals_effective():
+    """``plan_epoch`` lowers ``n_updates`` until no micro-batch can straddle two update
+    boundaries. That branch is unreachable at the recipe's 60 s / 198 s, but
+    PARITY_MICRO_BATCH_SECONDS may raise the micro-batch up to the effective batch
+    (recipes._validate only requires micro <= effective). These 42 frame counts are a
+    case where the naive round() would leave an update with no micro-batch at all."""
+    frames = [89, 135, 39, 109, 93, 44, 132, 131, 87, 144, 102, 139, 146, 98, 62, 45,
+              97, 51, 120, 142, 58, 95, 34, 50, 74, 136, 147, 106, 99, 98, 35, 74,
+              148, 78, 54, 57, 115, 32, 147, 135, 97, 85]
+    micro = effective = 65.0
+    plan = D.plan_epoch(frames, seed=42, epoch=0, micro_batch_seconds=micro,
+                        effective_batch_seconds=effective)
+    assert all(len(u) > 0 for u in plan.updates)
+    assert sorted(i for u in plan.updates for mb in u for i in mb) == list(range(len(frames)))
+    total = sum(plan.padded_seconds)
+    assert plan.n_updates < round(total / effective), "vacuous: the reduction never fired"
 
 
 def test_micro_batch_membership_changes_between_epochs_but_batch_sizes_do_not():

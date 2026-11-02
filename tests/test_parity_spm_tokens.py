@@ -29,6 +29,61 @@ UNITS = ["<unk>", "▁THE", "▁CAT", "S", "AT", "'"]
 # ------------------------------------------------------------- formats (no spm) --
 
 
+class _StubProcessor:
+    """The two SentencePieceProcessor methods ``encode_token_ids`` uses.
+
+    The id convention (SentencePiece id -> token id) is the one off-by-one that would
+    silently poison every training target, so it must be pinned in an environment
+    WITHOUT sentencepiece: it is absent from the laptop interpreter and forbidden in
+    Ada's frozen env (PROTOCOL 5.5), so a test gated on ``importorskip`` never runs.
+    ``text`` is a ``|``-separated spelling of the segmentation the stub should return.
+    """
+
+    def __init__(self, units):
+        self._units = list(units)
+
+    def encode(self, text, out_type=int):
+        pieces = text.split("|")
+        for piece in pieces:
+            if piece not in self._units:
+                raise AssertionError(f"stub asked to encode unknown piece {piece!r}")
+        return pieces if out_type is str else [self._units.index(p) for p in pieces]
+
+
+def test_encode_token_ids_is_the_sentencepiece_id_plus_one():
+    """token id = spm id + 1, because token 0 is <blank> (parity.text.BLANK_ID)."""
+    sp = _StubProcessor(UNITS)
+    tokens = T.token_list(UNITS)
+    ids = K.encode_token_ids(sp, "▁THE|▁CAT|S")
+    assert ids == [2, 3, 4]
+    # the invariant that matters: an id indexes its own piece in the model's token list
+    assert [tokens[i] for i in ids] == ["▁THE", "▁CAT", "S"]
+    assert sp.encode("▁THE|▁CAT|S", out_type=str) == [tokens[i] for i in ids]
+    assert T.ids_to_text(ids, tokens) == "THE CATS"
+
+
+def test_unk_is_token_one_and_targets_never_collide_with_blank_or_eos():
+    """<unk> is SentencePiece id 0; without the +1 it would BE <blank> and vanish."""
+    sp = _StubProcessor(UNITS)
+    tokens = T.token_list(UNITS)
+    ids = K.encode_token_ids(sp, "<unk>|▁THE")
+    assert ids[0] == 1 != T.BLANK_ID
+    assert tokens[ids[0]] == "<unk>"
+    assert min(ids) >= 1 and max(ids) <= len(UNITS)        # never <blank>, never <eos>
+    assert max(ids) != len(tokens) - 1
+
+
+def test_encoded_ids_survive_the_token_id_file_round_trip(tmp_path):
+    """What the trainer actually consumes: encode -> write -> read_token_ids."""
+    sp = _StubProcessor(UNITS)
+    rows = {"vid/0001": K.encode_token_ids(sp, "▁THE|▁CAT"),
+            "vid/0002": K.encode_token_ids(sp, "<unk>|S|AT")}
+    path = tmp_path / "token_ids_trainval.tsv"
+    K.write_token_ids(rows, path)
+    back = K.read_token_ids(path, n_units=len(UNITS))
+    assert back == {k: tuple(v) for k, v in rows.items()}
+
+
 def test_units_file_uses_upstreams_piece_id_format_and_round_trips(tmp_path):
     p = tmp_path / "units.txt"
     K.write_units_file(UNITS, p)
